@@ -1,0 +1,74 @@
+services:
+  db:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-trakvora_uat}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-trakvora_uat}
+      POSTGRES_DB: ${POSTGRES_DB:-trakvora_uat}
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_uat_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-trakvora_uat} -d ${POSTGRES_DB:-trakvora_uat}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8001:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-trakvora_uat}:${POSTGRES_PASSWORD:-trakvora_uat}@db:5432/${POSTGRES_DB:-trakvora_uat}
+      SECRET_KEY: ${SECRET_KEY:-uat-secret-key-change-me}
+      FLUTTERWAVE_SECRET_KEY: ${FLUTTERWAVE_SECRET_KEY:-}
+      FLUTTERWAVE_WEBHOOK_SECRET: ${FLUTTERWAVE_WEBHOOK_SECRET:-}
+      FLUTTERWAVE_TRANSFER_CALLBACK_URL: ${FLUTTERWAVE_TRANSFER_CALLBACK_URL:-}
+      FLUTTERWAVE_REDIRECT_URL: ${FLUTTERWAVE_REDIRECT_URL:-}
+      SMILE_IDENTITY_API_KEY: ${SMILE_IDENTITY_API_KEY:-}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      SMTP_HOST: ${SMTP_HOST:-smtp.hmailplus.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-noreply@trakvora.com}
+      SMTP_TLS: "true"
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5174}
+      SUPPORT_WHATSAPP: ${SUPPORT_WHATSAPP:-+254700000000}
+      SUPPORT_EMAIL: ${SUPPORT_EMAIL:-support@trakvora.com}
+      ENVIRONMENT: uat
+      ETIMS_SANDBOX: "true"
+      AFRICASTALKING_USERNAME: sandbox
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  frontend:
+    image: node:20-alpine
+    restart: unless-stopped
+    working_dir: /app
+    ports:
+      - "5174:5174"
+    environment:
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:8001}
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+    command: sh -c "npm install && npm run dev -- --host --port 5174"
+
+volumes:
+  postgres_uat_data:
