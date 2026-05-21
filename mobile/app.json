@@ -1,0 +1,76 @@
+{
+  "expo": {
+    "name": "Trakvora",
+    "slug": "trakvora",
+    "version": "1.0.0",
+    "scheme": "trakvora",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "extra": {
+      "apiUrl": "http://localhost:8000"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.trakvora.app",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Trakvora uses your location to track shipments and show nearby loads.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Trakvora uses your location in the background to broadcast GPS position while driving.",
+        "NSCameraUsageDescription": "Trakvora uses the camera for delivery proof photos and document uploads.",
+        "NSPhotoLibraryUsageDescription": "Trakvora accesses your photos to upload profile pictures and documents."
+      }
+    },
+    "android": {
+      "package": "com.trakvora.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#0f766e",
+        "foregroundImage": "./assets/android-icon-foreground.png"
+      },
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE",
+        "POST_NOTIFICATIONS"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-secure-store",
+      "expo-web-browser",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow Trakvora to use your location for shipment tracking.",
+          "isAndroidBackgroundLocationEnabled": true
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Trakvora to use your camera for delivery proof and document uploads."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#0f766e"
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Trakvora to access your photos for profile and document uploads."
+        }
+      ]
+    ]
+  }
+}
