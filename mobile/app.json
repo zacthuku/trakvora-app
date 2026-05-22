@@ -7,7 +7,6 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
     "extra": {
       "apiUrl": "https://trakvora.onrender.com",
       "eas": {
@@ -17,6 +16,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.trakvora.app",
+      "newArchEnabled": true,
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Trakvora uses your location to track shipments and show nearby loads.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "Trakvora uses your location in the background to broadcast GPS position while driving.",
@@ -26,6 +26,7 @@
     },
     "android": {
       "package": "com.trakvora.app",
+      "newArchEnabled": true,
       "adaptiveIcon": {
         "backgroundColor": "#0f766e",
         "foregroundImage": "./assets/android-icon-foreground.png"
