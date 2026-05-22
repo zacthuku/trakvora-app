@@ -6,7 +6,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     database_url: str = "postgresql+asyncpg://trakvora:trakvora@localhost:5432/trakvora"
-    secret_key: str = "change-me-in-production"
+    secret_key: str = ""
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 7
     environment: str = "development"
