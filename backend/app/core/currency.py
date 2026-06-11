@@ -16,15 +16,6 @@ COUNTRY_CURRENCY: dict[str, str] = {
     "EU": "EUR",
 }
 
-COUNTRY_PAYMENT_OPTIONS: dict[str, str] = {
-    "KE": "card,mobilemoney",
-    "UG": "card,mobilemoney",
-    "TZ": "card,mobilemoney",
-    "RW": "card,mobilemoney",
-    "GH": "card,mobilemoney",
-    "NG": "card,banktransfer,ussd",
-}
-
 DEFAULT_COUNTRY = "KE"
 DEFAULT_CURRENCY = "KES"
 
@@ -44,5 +35,3 @@ def currency_for_user(user: User) -> str:
     return currency_for_country(getattr(user, "country", None))
 
 
-def flutterwave_payment_options_for_country(country: str | None) -> str:
-    return COUNTRY_PAYMENT_OPTIONS.get(normalize_country(country), "card")

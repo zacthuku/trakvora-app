@@ -15,3 +15,4 @@ class NotificationOut(BaseModel):
     reference_id:      uuid.UUID | None
     reference_type:    str | None
     created_at:        datetime
+    resolved_load_id:  uuid.UUID | None = None

@@ -1,15 +1,19 @@
+import secrets
 import uuid
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.exceptions import NotFoundError
+from app.core.subscription_limits import get_effective_plan
 from app.database import get_db
 from app.dependencies import get_current_user, require_role
-from app.models.driver import AvailabilityStatus, Driver
+from app.core.exceptions import ForbiddenError
+from app.models.driver import AvailabilityStatus, Driver, VerificationStatus
 from app.models.notification import NotificationType
 from app.models.user import User, UserRole
 from app.repositories.driver_repo import DriverRepository
@@ -20,12 +24,23 @@ from app.schemas.driver import (
     DriverAvailabilityUpdate, DriverOut, DriverProfileCreate,
     DriverProfileUpdate, DriverPublicOut, DriverWithUserOut, JobPostCreate,
 )
-from app.services import notification_service
+from app.services import email_service, notification_service
+from app.services.kyc_service import verify_driver_licence
 
 
 class InviteResponsePayload(BaseModel):
     owner_id:        uuid.UUID
     notification_id: uuid.UUID
+
+
+class RegisterDriverForOwnerPayload(BaseModel):
+    full_name:    str       = Field(..., min_length=2, max_length=255)
+    email:        EmailStr
+    phone:        str       = Field(..., min_length=8, max_length=25)
+    country:      str       = Field(default="KE", max_length=2)
+    licence_number: str     = Field(..., min_length=2, max_length=50)
+    national_id:  str | None = None
+    kra_pin:      str | None = None
 
 
 def _driver_with_user(d: Driver) -> DriverWithUserOut:
@@ -169,6 +184,101 @@ async def update_profile(
     return updated
 
 
+@router.post("/register-for-owner", response_model=DriverWithUserOut, status_code=201)
+async def register_driver_for_owner(
+    payload: RegisterDriverForOwnerPayload,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(require_role(UserRole.owner)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Fleet owner registers a new driver who is not yet on Trakvora."""
+    from app.core.security import hash_password
+    from app.repositories.wallet_repo import WalletRepository
+    from app.services.auth_service import _assign_free_plan, currency_for_user
+
+    user_repo = UserRepository(db)
+    if await user_repo.get_by_email(payload.email):
+        raise HTTPException(409, "A user with this email already exists on Trakvora.")
+
+    new_user = await user_repo.create(
+        email=payload.email,
+        phone=payload.phone,
+        full_name=payload.full_name,
+        hashed_password=hash_password(secrets.token_urlsafe(32)),
+        role=UserRole.driver,
+        country=payload.country.upper(),
+        national_id=payload.national_id,
+        kra_pin=payload.kra_pin,
+        is_verified=True,
+    )
+
+    wallet_repo = WalletRepository(db)
+    await wallet_repo.create_wallet(new_user.id, currency=currency_for_user(new_user))
+    await _assign_free_plan(new_user, db)
+
+    driver_repo = DriverRepository(db)
+    driver = await driver_repo.create(
+        user_id=new_user.id,
+        licence_number=payload.licence_number,
+        employer_id=current_user.id,
+    )
+    await db.refresh(driver, ["user"])
+
+    owner_name = current_user.full_name or current_user.company_name or "Your employer"
+    background_tasks.add_task(
+        email_service.send_driver_account_created_email,
+        new_user.email, new_user.full_name, owner_name,
+    )
+
+    return _driver_with_user(driver)
+
+
+async def _run_licence_check(driver_id: uuid.UUID, licence_number: str, country: str) -> None:
+    """Background task: verify driving licence via Smile Identity and save result."""
+    from app.database import AsyncSessionLocal
+    async with AsyncSessionLocal() as db:
+        repo = DriverRepository(db)
+        driver = await repo.get_by_id(driver_id)
+        if not driver:
+            return
+        # Mark as pending while the check runs
+        await repo.update(driver, licence_check_status="pending")
+        passed, detail = await verify_driver_licence(licence_number, country)
+        await repo.update(
+            driver,
+            licence_check_status="passed" if passed else "failed",
+            licence_check_at=datetime.now(timezone.utc),
+            licence_check_detail=detail,
+        )
+
+
+@router.patch("/me/submit-documents", response_model=DriverOut)
+async def submit_driver_documents(
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(require_role(UserRole.driver)),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Driver declares their documents are ready for admin review.
+    Requires licence_photo_url to be already uploaded on the profile.
+    Sets documents_submitted=True. Works as initial submission and resubmission after rejection.
+    Automatically triggers an NTSA licence check in the background via Smile Identity.
+    """
+    repo = DriverRepository(db)
+    driver = await repo.get_by_user_id(current_user.id)
+    if not driver:
+        raise NotFoundError("Driver profile")
+    if not driver.licence_photo_url:
+        raise ForbiddenError("Please upload your licence photo before submitting for review.")
+    updated = await repo.update(driver, documents_submitted=True)
+    # Kick off automated NTSA licence check (non-blocking)
+    country = (current_user.country or "KE").upper()
+    background_tasks.add_task(
+        _run_licence_check, driver.id, driver.licence_number, country
+    )
+    return updated
+
+
 @router.patch("/me/availability", response_model=DriverOut)
 async def update_availability(
     payload: DriverAvailabilityUpdate,
@@ -205,10 +315,11 @@ async def search_carriers_for_offer(
         select(Driver)
         .options(selectinload(Driver.user))
         .where(
+            Driver.verification_status == VerificationStatus.approved,
             or_(
                 Driver.availability_status == AvailabilityStatus.available,
                 Driver.seeking_employment == True,  # noqa: E712
-            )
+            ),
         )
     )
     result = await db.execute(stmt)
@@ -259,18 +370,91 @@ async def get_seeking_drivers(
     _: User = Depends(require_role(UserRole.owner)),
     db: AsyncSession = Depends(get_db),
 ):
-    """Drivers who are available or actively seeking employment."""
+    """Verified drivers who are available or actively seeking employment."""
     result = await db.execute(
         select(Driver)
         .options(selectinload(Driver.user))
         .where(
+            Driver.verification_status == VerificationStatus.approved,
             or_(
                 Driver.availability_status == AvailabilityStatus.available,
                 Driver.seeking_employment == True,  # noqa: E712
-            )
+            ),
         )
     )
     return [_driver_with_user(d) for d in result.scalars().all()]
+
+
+@router.get("/{driver_id}/stats")
+async def get_driver_stats(
+    driver_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.models.shipment import Shipment
+    from app.models.load import Load, LoadStatus
+
+    repo = DriverRepository(db)
+    driver = await repo.get_by_id(driver_id)
+    if not driver:
+        raise NotFoundError("Driver profile")
+
+    # Only the driver themselves, their employer, or admins can view stats
+    is_own = current_user.id == driver.user_id
+    is_employer = current_user.id == driver.employer_id
+    is_admin = current_user.role == UserRole.admin
+    if not (is_own or is_employer or is_admin):
+        raise ForbiddenError()
+
+    all_shipments = (await db.execute(
+        select(Shipment).where(Shipment.driver_id == driver.user_id)
+        .options(selectinload(Shipment.load))
+    )).scalars().all()
+
+    total_trips     = len(all_shipments)
+    completed       = [s for s in all_shipments if s.status == LoadStatus.delivered]
+    cancelled       = [s for s in all_shipments if s.status == LoadStatus.cancelled]
+    disputes        = [s for s in all_shipments if s.dispute_open]
+    rated           = [s for s in completed if s.carrier_rating is not None]
+    avg_rating      = round(sum(s.carrier_rating for s in rated) / len(rated), 2) if rated else None
+
+    from datetime import date as _date
+    this_month_start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    trips_this_month = sum(1 for s in all_shipments if s.delivered_at and s.delivered_at >= this_month_start)
+
+    # Corridor breakdown
+    corridor_counts: dict[str, int] = {}
+    for s in completed:
+        if s.load:
+            key = f"{s.load.pickup_location} → {s.load.dropoff_location}" if s.load.pickup_location and s.load.dropoff_location else (s.load.corridor or "Unknown")
+            corridor_counts[key] = corridor_counts.get(key, 0) + 1
+    top_corridors = sorted(
+        [{"route": k, "trips": v} for k, v in corridor_counts.items()],
+        key=lambda x: x["trips"],
+        reverse=True,
+    )[:5]
+
+    # Cargo type breakdown
+    cargo_counts: dict[str, int] = {}
+    for s in all_shipments:
+        if s.load and s.load.cargo_type:
+            ct = s.load.cargo_type
+            cargo_counts[ct] = cargo_counts.get(ct, 0) + 1
+    cargo_breakdown = [{"type": k, "trips": v} for k, v in cargo_counts.items()]
+
+    completion_rate = round(len(completed) / total_trips * 100, 1) if total_trips else 0
+
+    return {
+        "total_trips":           total_trips,
+        "completed_trips":       len(completed),
+        "cancelled_trips":       len(cancelled),
+        "completion_rate_pct":   completion_rate,
+        "trips_this_month":      trips_this_month,
+        "avg_rating":            avg_rating,
+        "disputes_raised":       len(disputes),
+        "top_corridors":         top_corridors,
+        "cargo_type_breakdown":  cargo_breakdown,
+    }
 
 
 @router.get("/{driver_id}", response_model=DriverPublicOut)
@@ -316,25 +500,15 @@ async def invite_driver(
         raise HTTPException(409, "Driver is already employed")
 
     # Enforce plan driver quota
-    from app.models.subscription import Subscription, SubscriptionStatus
-    sub_result = await db.execute(
-        select(Subscription)
-        .options(selectinload(Subscription.plan))
-        .where(
-            Subscription.user_id == current_user.id,
-            Subscription.status.in_([SubscriptionStatus.active, SubscriptionStatus.trialing]),
-        )
-    )
-    sub = sub_result.scalar_one_or_none()
-    if sub and sub.plan and sub.plan.max_drivers is not None:
-        count_result = await db.execute(
+    plan = await get_effective_plan(current_user.id, db)
+    if plan and plan.max_drivers is not None:
+        driver_count = (await db.execute(
             select(func.count()).select_from(Driver).where(Driver.employer_id == current_user.id)
-        )
-        driver_count = count_result.scalar() or 0
-        if driver_count >= sub.plan.max_drivers:
+        )).scalar() or 0
+        if driver_count >= plan.max_drivers:
             raise HTTPException(
                 status_code=402,
-                detail=f"Your {sub.plan.name} plan allows {sub.plan.max_drivers} driver(s). Upgrade your plan to add more.",
+                detail=f"Your {plan.name} plan allows {plan.max_drivers} driver(s). Upgrade your plan to add more.",
             )
 
     await notification_service.send_notification(

@@ -1,0 +1,124 @@
+# ============================================================
+#  Trakvora — VPS 2 only (Backend + Redis + Celery)
+#  Used by Options B (Hyper-V Docker) and C (WSL2 Docker).
+#
+#  PostgreSQL runs on VPS 3 — NOT in this file.
+#  DATABASE_URL in your env file must point to VPS 3's IP.
+#
+#  Usage:
+#    docker compose -f docker-compose.vps2.yml --env-file /path/to/env.prod up -d
+# ============================================================
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: always
+    command: >
+      redis-server
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --requirepass ${REDIS_PASSWORD:-}
+      --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - internal
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      SECRET_KEY: ${SECRET_KEY}
+      REDIS_URL: redis://:${REDIS_PASSWORD:-}@redis:6379/0
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      REFRESH_TOKEN_EXPIRE_DAYS: ${REFRESH_TOKEN_EXPIRE_DAYS:-7}
+      INTASEND_PUBLIC_KEY: ${INTASEND_PUBLIC_KEY}
+      INTASEND_SECRET_KEY: ${INTASEND_SECRET_KEY}
+      INTASEND_WEBHOOK_SECRET: ${INTASEND_WEBHOOK_SECRET}
+      INTASEND_REDIRECT_URL: ${INTASEND_REDIRECT_URL}
+      INTASEND_WEBHOOK_URL: ${INTASEND_WEBHOOK_URL}
+      SMILE_IDENTITY_API_KEY: ${SMILE_IDENTITY_API_KEY:-}
+      SMILE_IDENTITY_PARTNER_ID: ${SMILE_IDENTITY_PARTNER_ID:-}
+      AFRICASTALKING_API_KEY: ${AFRICASTALKING_API_KEY:-}
+      AFRICASTALKING_USERNAME: ${AFRICASTALKING_USERNAME:-production}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_MAPS_SERVER_API_KEY: ${GOOGLE_MAPS_SERVER_API_KEY:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-}
+      SMTP_TLS: ${SMTP_TLS:-true}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      SUPPORT_WHATSAPP: ${SUPPORT_WHATSAPP:-}
+      SUPPORT_EMAIL: ${SUPPORT_EMAIL:-}
+      ENVIRONMENT: production
+      KRA_PIN: ${KRA_PIN:-}
+      ETIMS_USERNAME: ${ETIMS_USERNAME:-}
+      ETIMS_PASSWORD: ${ETIMS_PASSWORD:-}
+      ETIMS_BRANCH_ID: ${ETIMS_BRANCH_ID:-00}
+      ETIMS_SANDBOX: "false"
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_S3_BUCKET: ${AWS_S3_BUCKET:-}
+      AWS_REGION: ${AWS_REGION:-af-south-1}
+      FIREBASE_SERVICE_ACCOUNT_KEY: ${FIREBASE_SERVICE_ACCOUNT_KEY:-}
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - internal
+
+  celery_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: always
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      SECRET_KEY: ${SECRET_KEY}
+      REDIS_URL: redis://:${REDIS_PASSWORD:-}@redis:6379/0
+      INTASEND_SECRET_KEY: ${INTASEND_SECRET_KEY}
+      INTASEND_WEBHOOK_SECRET: ${INTASEND_WEBHOOK_SECRET}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      AFRICASTALKING_API_KEY: ${AFRICASTALKING_API_KEY:-}
+      AFRICASTALKING_USERNAME: ${AFRICASTALKING_USERNAME:-production}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_S3_BUCKET: ${AWS_S3_BUCKET:-}
+      AWS_REGION: ${AWS_REGION:-af-south-1}
+      FIREBASE_SERVICE_ACCOUNT_KEY: ${FIREBASE_SERVICE_ACCOUNT_KEY:-}
+      ENVIRONMENT: production
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=4
+    networks:
+      - internal
+
+volumes:
+  redis_data:
+
+networks:
+  internal:
+    driver: bridge

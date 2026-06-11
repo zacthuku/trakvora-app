@@ -24,8 +24,16 @@ class BidOut(BaseModel):
     status: BidStatus
     message: str | None
     created_at: datetime
+    # Bidder info (populated when owner relationship is loaded)
     bidder_name: str | None = None
     bidder_company: str | None = None
+    bidder_rating: float | None = None
+    # Truck info (populated when truck relationship is loaded)
+    truck_is_verified: bool | None = None
+    truck_registration: str | None = None
+    truck_type_str: str | None = None
+    truck_verification_score: float | None = None
+    bidder_partner_tier: str | None = None
 
 
 class BidStatusUpdate(BaseModel):

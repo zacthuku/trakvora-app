@@ -34,6 +34,7 @@ class Notification(Base):
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
     is_read: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_admin_notification: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     reference_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     reference_type: Mapped[str | None] = mapped_column(String(50))
 

@@ -1,15 +1,16 @@
 """
-Flutterwave webhook handler.
+IntaSend webhook handler.
 
-Flutterwave sends signed POST requests to this endpoint for payment events.
-Signature: X-Flutterwave-Signature header (HMAC-SHA256 of request body using secret key).
+IntaSend sends signed POST requests for collection and send-money events.
+Signature: X-IntaSend-Signature header (HMAC-SHA256 of raw body using webhook secret).
 
 Events handled:
-  charge.completed   → top up user wallet on successful payment
-  subscription.cancelled → mark subscription as cancelled
+  state == COMPLETE (collection)  → credit user wallet on successful top-up
+  state == COMPLETE/FAILED (send-money) → update withdrawal transaction status
 """
 import hashlib
 import hmac
+import json
 import uuid
 
 import httpx
@@ -19,7 +20,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
-from app.models.subscription import Subscription, SubscriptionStatus
 from app.models.user import User
 from app.models.wallet import Transaction, TransactionStatus, TransactionType
 from app.repositories.wallet_repo import WalletRepository
@@ -27,85 +27,85 @@ from app.repositories.wallet_repo import WalletRepository
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
 
-def _verify_hmac_signature(body: bytes, signature: str) -> bool:
-    secret = getattr(settings, "flutterwave_secret_key", "")
-    if not secret:
+def _verify_intasend_signature(body: bytes, signature: str | None) -> bool:
+    secret = settings.intasend_webhook_secret
+    if not secret or not signature:
         return False
     expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, signature)
 
 
-def _verify_verif_hash(verif_hash: str | None) -> bool:
-    secret = getattr(settings, "flutterwave_webhook_secret", "") or getattr(settings, "flutterwave_secret_hash", "")
-    return bool(secret and verif_hash and hmac.compare_digest(secret, verif_hash))
-
-
-async def _verify_flutterwave_transaction(transaction_id: str | int | None) -> dict | None:
-    if not transaction_id or not settings.flutterwave_secret_key:
+async def _verify_intasend_collection(invoice_id: str) -> dict | None:
+    if not invoice_id or not settings.intasend_secret_key:
         return None
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
             response = await client.get(
-                f"https://api.flutterwave.com/v3/transactions/{transaction_id}/verify",
-                headers={"Authorization": f"Bearer {settings.flutterwave_secret_key}"},
+                f"{settings.intasend_base_url}/api/v1/payment/collection/{invoice_id}/",
+                headers={"Authorization": f"Token {settings.intasend_secret_key}"},
             )
-            payload = response.json()
+            data = response.json()
     except (httpx.HTTPError, ValueError):
         return None
-    if response.status_code != 200 or payload.get("status") != "success":
+    if response.status_code != 200:
         return None
-    return payload.get("data") or {}
+    return data
 
 
-@router.post("/flutterwave")
-async def flutterwave_webhook(
+@router.post("/intasend")
+async def intasend_webhook(
     request: Request,
-    verif_hash: str = Header(None, alias="verif-hash"),
-    x_flutterwave_signature: str = Header(None, alias="x-flutterwave-signature"),
+    x_intasend_signature: str = Header(None, alias="x-intasend-signature"),
     db: AsyncSession = Depends(get_db),
 ):
     body = await request.body()
-    signature_ok = _verify_hmac_signature(body, x_flutterwave_signature or "") or _verify_verif_hash(verif_hash)
+    signature_ok = _verify_intasend_signature(body, x_intasend_signature)
 
     if settings.environment == "production" and not signature_ok:
         raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
     try:
-        import json
         payload = json.loads(body)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON payload")
 
-    event = payload.get("event", "")
-    data = payload.get("data", {})
+    state = str(payload.get("state", "")).upper()
+    invoice_id = str(payload.get("invoice_id") or payload.get("id") or "")
+    api_ref = str(payload.get("api_ref") or payload.get("tx_ref") or "")
+    tracking_id = str(payload.get("tracking_id") or "")
 
-    if event == "charge.completed" and data.get("status") == "successful":
-        verified = await _verify_flutterwave_transaction(data.get("id") or data.get("transaction_id"))
+    if tracking_id:
+        # Send-money (withdrawal) event
+        await _handle_transfer_event(payload, db)
+    elif state == "COMPLETE" and (invoice_id or api_ref):
+        # Collection (top-up) event — verify with API before crediting
+        verified = await _verify_intasend_collection(invoice_id) if invoice_id else None
         if settings.environment == "production" and not verified:
-            raise HTTPException(status_code=502, detail="Unable to verify Flutterwave transaction")
+            raise HTTPException(status_code=502, detail="Unable to verify IntaSend transaction")
         if verified:
-            data = {**data, **verified}
-        await _handle_charge_completed(data, db)
-    elif event in ("transfer.completed", "transfer.failed", "transfer.reversed"):
-        await _handle_transfer_event(data, db)
-    elif event in ("subscription.cancelled", "subscription.deactivated"):
-        await _handle_subscription_cancelled(data, db)
+            payload = {**payload, **verified}
+        # Route to the correct handler based on tx_ref prefix
+        if api_ref.startswith("onboarding-"):
+            await _handle_onboarding_fee_paid(api_ref, db)
+        else:
+            await _handle_charge_completed(payload, db)
 
     return {"status": "ok"}
 
 
 async def _handle_charge_completed(data: dict, db: AsyncSession) -> None:
-    """Credit the user's wallet on a successful top-up charge."""
-    meta = data.get("meta", {}) or {}
-    user_id_str = meta.get("user_id") or data.get("customer", {}).get("email")
-    amount = float(data.get("amount", 0))
+    """Credit the user wallet on a successful top-up."""
+    customer = data.get("customer") or {}
+    user_id_str = (
+        data.get("meta", {}) or {}
+    ).get("user_id") or customer.get("email") or ""
+    amount = float(data.get("amount") or data.get("net_amount") or 0)
     currency = data.get("currency")
-    tx_ref = data.get("tx_ref") or data.get("flw_ref", "")
+    tx_ref = data.get("api_ref") or data.get("tx_ref") or ""
 
     if not user_id_str or amount <= 0:
         return
 
-    # Resolve user — meta.user_id is preferred (UUID), fallback to email
     user = None
     try:
         user_uuid = uuid.UUID(user_id_str)
@@ -122,7 +122,7 @@ async def _handle_charge_completed(data: dict, db: AsyncSession) -> None:
     if not wallet:
         wallet = await repo.create_wallet(user.id)
 
-    existing = await repo.get_transaction_by_reference(tx_ref)
+    existing = await repo.get_transaction_by_reference(tx_ref) if tx_ref else None
     if existing and existing.status == TransactionStatus.completed:
         return
 
@@ -130,14 +130,14 @@ async def _handle_charge_completed(data: dict, db: AsyncSession) -> None:
         expected_amount = float(existing.amount_kes)
         if round(expected_amount, 2) != round(amount, 2):
             existing.status = TransactionStatus.failed
-            existing.description = f"Flutterwave amount mismatch for ref: {tx_ref}"
+            existing.description = f"IntaSend amount mismatch for ref: {tx_ref}"
             await db.commit()
             return
 
     if wallet.currency and currency and wallet.currency != currency:
         if existing:
             existing.status = TransactionStatus.failed
-            existing.description = f"Flutterwave currency mismatch for ref: {tx_ref}"
+            existing.description = f"IntaSend currency mismatch for ref: {tx_ref}"
             await db.commit()
         return
 
@@ -146,7 +146,7 @@ async def _handle_charge_completed(data: dict, db: AsyncSession) -> None:
     if existing:
         existing.status = TransactionStatus.completed
         existing.transaction_type = TransactionType.top_up
-        existing.description = f"Wallet top-up via Flutterwave (ref: {tx_ref})"
+        existing.description = f"Wallet top-up via IntaSend (ref: {tx_ref})"
         existing.amount_kes = amount
         await db.flush()
     else:
@@ -156,36 +156,75 @@ async def _handle_charge_completed(data: dict, db: AsyncSession) -> None:
             transaction_type=TransactionType.top_up,
             amount_kes=amount,
             status=TransactionStatus.completed,
-            description=f"Wallet top-up via Flutterwave (ref: {tx_ref})",
+            description=f"Wallet top-up via IntaSend (ref: {tx_ref})",
             reference=tx_ref,
         )
 
+    # Instantly attempt to clear any pending/overdue commission invoices for this user
+    # so they are unblocked immediately rather than waiting for the hourly scheduler
+    from app.models.commission_invoice import CommissionInvoice, CommissionInvoiceStatus
+    from app.services.commission_service import attempt_commission_payment, unblock_if_cleared
+
+    pending_invoices = (await db.execute(
+        select(CommissionInvoice).where(
+            CommissionInvoice.owner_id == user.id,
+            CommissionInvoice.status.in_([
+                CommissionInvoiceStatus.pending,
+                CommissionInvoiceStatus.overdue,
+            ]),
+        ).order_by(CommissionInvoice.due_at.asc())
+    )).scalars().all()
+
+    for inv in pending_invoices:
+        if not await attempt_commission_payment(inv, db):
+            break  # wallet balance exhausted
+
+    await unblock_if_cleared(user.id, db)
+    await db.commit()
+
+
+async def _handle_onboarding_fee_paid(tx_ref: str, db: AsyncSession) -> None:
+    """Mark an OnboardingFeeRecord as paid when IntaSend confirms the checkout."""
+    from datetime import timezone as _tz
+    from app.models.onboarding_fee import OnboardingFeeRecord, OnboardingFeeStatus
+
+    record = (await db.execute(
+        select(OnboardingFeeRecord).where(OnboardingFeeRecord.tx_ref == tx_ref)
+    )).scalar_one_or_none()
+
+    if not record or record.status == OnboardingFeeStatus.paid:
+        return
+
+    record.status = OnboardingFeeStatus.paid
+    record.paid_at = datetime.now(_tz.utc)
     await db.commit()
 
 
 async def _handle_transfer_event(data: dict, db: AsyncSession) -> None:
-    reference = data.get("reference") or data.get("tx_ref")
-    transfer_id = str(data.get("id") or data.get("transfer_id") or "")
-    status = str(data.get("status") or "").lower()
-    if not reference and not transfer_id:
+    tracking_id = str(data.get("tracking_id") or "")
+    reference = str(data.get("api_ref") or data.get("reference") or "")
+    state = str(data.get("state") or "").upper()
+    status = state.lower()
+
+    if not tracking_id and not reference:
         return
 
     query = select(Transaction).where(Transaction.transaction_type == TransactionType.withdrawal)
-    if reference:
-        query = query.where(Transaction.provider_reference == str(reference))
+    if tracking_id:
+        query = query.where(Transaction.provider_transaction_id == tracking_id)
     else:
-        query = query.where(Transaction.provider_transaction_id == transfer_id)
+        query = query.where(Transaction.provider_reference == reference)
     transaction = (await db.execute(query)).scalar_one_or_none()
     if not transaction:
         return
 
     transaction.provider_status = status or transaction.provider_status
-    if transfer_id:
-        transaction.provider_transaction_id = transfer_id
+    if tracking_id:
+        transaction.provider_transaction_id = tracking_id
 
-    if status in {"successful", "completed", "success"}:
+    if state in {"COMPLETE", "COMPLETED", "SUCCESSFUL"}:
         transaction.status = TransactionStatus.completed
-    elif status in {"failed", "reversed", "cancelled"} and transaction.status == TransactionStatus.pending:
+    elif state in {"FAILED", "REVERSED", "CANCELLED"} and transaction.status == TransactionStatus.pending:
         repo = WalletRepository(db)
         wallet = await repo.get_by_id(transaction.wallet_id)
         if wallet:
@@ -194,20 +233,3 @@ async def _handle_transfer_event(data: dict, db: AsyncSession) -> None:
         transaction.description = f"{transaction.description or 'Withdrawal request'} — provider {status}"
 
     await db.commit()
-
-
-async def _handle_subscription_cancelled(data: dict, db: AsyncSession) -> None:
-    """Mark the matching Subscription record as cancelled."""
-    flw_sub_id = str(data.get("id", ""))
-    if not flw_sub_id:
-        return
-
-    result = await db.execute(
-        select(Subscription).where(Subscription.flutterwave_subscription_id == flw_sub_id)
-    )
-    sub = result.scalar_one_or_none()
-    if sub and sub.status != SubscriptionStatus.cancelled:
-        from datetime import datetime, timezone
-        sub.status = SubscriptionStatus.cancelled
-        sub.cancelled_at = datetime.now(timezone.utc)
-        await db.commit()

@@ -1,4 +1,6 @@
 """Integration tests for /admin/* routes — role-based access control."""
+import uuid as _uuid
+
 import pytest
 
 from app.core.security import create_access_token
@@ -8,22 +10,23 @@ from tests.conftest import VALID_PASSWORD, _register_and_login
 @pytest.fixture
 async def true_admin_headers(client, db):
     """
-    Admin user with role=admin created via register.
-    Note: The admin role in the system is just UserRole.admin — full admin access.
+    Admin user with role=admin created directly via the repo (bypasses HTTP).
+    Uses a unique uid per call so multiple tests don't collide on phone/email.
     """
-    from app.repositories.user_repo import UserRepository
     from app.core.security import hash_password
+    from app.repositories.user_repo import UserRepository
+    from app.repositories.wallet_repo import WalletRepository
 
+    uid = _uuid.uuid4().hex[:8]
     repo = UserRepository(db)
     user = await repo.create(
-        email="admin_direct@trakvora.test",
-        phone="+254799000001",
-        full_name="Direct Admin",
+        email=f"admin_direct_{uid}@example.com",
+        phone=f"+2547990{abs(hash(uid)) % 100000:05d}",
+        full_name=f"Direct Admin {uid}",
         hashed_password=hash_password(VALID_PASSWORD),
         role="admin",
         country="KE",
     )
-    from app.repositories.wallet_repo import WalletRepository
     await WalletRepository(db).create_wallet(user.id, currency="KES")
     await db.commit()
 

@@ -4,7 +4,7 @@ from typing import Sequence
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.driver import AvailabilityStatus, Driver
+from app.models.driver import AvailabilityStatus, Driver, VerificationStatus
 
 
 class DriverRepository:
@@ -20,13 +20,14 @@ class DriverRepository:
         return result.scalar_one_or_none()
 
     async def list_available(self) -> Sequence[Driver]:
-        """Return drivers who are available or actively seeking employment."""
+        """Return verified drivers who are available or actively seeking employment."""
         result = await self.db.execute(
             select(Driver).where(
+                Driver.verification_status == VerificationStatus.approved,
                 or_(
                     Driver.availability_status == AvailabilityStatus.available,
                     Driver.seeking_employment == True,  # noqa: E712
-                )
+                ),
             )
         )
         return result.scalars().all()

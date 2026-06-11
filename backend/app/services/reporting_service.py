@@ -95,8 +95,8 @@ async def generate_fleet_report(owner_user_id: str, db: AsyncSession) -> dict:
         select(Shipment).where(Shipment.owner_id == owner_user_id)
     )
     shipments = shipments_result.scalars().all()
-    completed = [s for s in shipments if s.status == "delivered"]
-    in_progress = [s for s in shipments if s.status in ("booked", "en_route_pickup", "loaded", "in_transit")]
+    completed = [s for s in shipments if s.status == LoadStatus.delivered]
+    in_progress = [s for s in shipments if s.status in (LoadStatus.booked, LoadStatus.en_route_pickup, LoadStatus.loaded, LoadStatus.in_transit)]
 
     # Revenue from completed payout transactions
     revenue_result = await db.execute(
@@ -135,7 +135,7 @@ async def generate_platform_analytics(db: AsyncSession, days: int = 30) -> dict:
     completed_result = await db.execute(
         select(func.count(Shipment.id)).where(
             Shipment.created_at >= since,
-            Shipment.status == "delivered",
+            Shipment.status == LoadStatus.delivered,
         )
     )
     revenue_result = await db.execute(
@@ -195,7 +195,7 @@ async def generate_advanced_company_analytics(company_id: str, db: AsyncSession,
     )
     shipments = shipments_result.scalars().all()
 
-    completed_shipments = [s for s in shipments if s.status == "delivered"]
+    completed_shipments = [s for s in shipments if s.status == LoadStatus.delivered]
     on_time_deliveries = []
 
     # Batch-load all loads for completed shipments in one query
@@ -291,7 +291,7 @@ async def generate_operational_alerts(db: AsyncSession, days: int = 7) -> dict:
     late_loads_result = await db.execute(
         select(Load, Shipment).join(Shipment, Load.id == Shipment.load_id).where(
             Load.delivery_date < datetime.now(timezone.utc).date().isoformat(),
-            Shipment.status != "delivered",
+            Shipment.status != LoadStatus.delivered,
             Load.created_at >= since
         )
     )
@@ -311,7 +311,7 @@ async def generate_operational_alerts(db: AsyncSession, days: int = 7) -> dict:
     # High-risk trips (long distance, high value, or disputed)
     high_risk_result = await db.execute(
         select(Load, Shipment).join(Shipment, Load.id == Shipment.load_id).where(
-            Shipment.status.in_(["loaded", "in_transit"]),
+            Shipment.status.in_([LoadStatus.loaded, LoadStatus.in_transit]),
             (Load.distance_km > 1000) | (Load.price_kes > 50000) | (Shipment.dispute_open == True)
         )
     )
@@ -426,3 +426,89 @@ def _trail_distance_km(trail: list) -> float:
             trail[i].latitude, trail[i].longitude,
         )
     return total
+
+
+# ── Dwell Time Analysis ───────────────────────────────────────────────────────
+
+_DWELL_SPEED_THRESHOLD_KMH = 5.0    # below this → "stopped"
+_DWELL_MIN_DURATION_MINUTES = 5.0   # minimum stop length to include in report
+
+
+async def generate_dwell_report(shipment_id: str, db: AsyncSession) -> dict:
+    """
+    Detect stops (dwell periods) in a shipment's GPS trail.
+
+    A stop is a run of consecutive TrackingPoints where speed_kmh < 5 km/h
+    lasting at least 5 minutes.
+
+    Returns:
+        {
+            "shipment_id": str,
+            "total_dwell_minutes": float,
+            "stops": [
+                {
+                    "start_time": ISO str,
+                    "end_time": ISO str,
+                    "duration_minutes": float,
+                    "centroid_lat": float,
+                    "centroid_lon": float,
+                }
+            ]
+        }
+    """
+    import uuid as _uuid
+
+    try:
+        sid = _uuid.UUID(shipment_id)
+    except ValueError:
+        return {"shipment_id": shipment_id, "total_dwell_minutes": 0, "stops": []}
+
+    result = await db.execute(
+        select(TrackingPoint)
+        .where(TrackingPoint.shipment_id == sid)
+        .order_by(TrackingPoint.recorded_at)
+    )
+    points = result.scalars().all()
+
+    stops: list[dict] = []
+    i = 0
+    while i < len(points):
+        pt = points[i]
+        speed = pt.speed_kmh if pt.speed_kmh is not None else 0.0
+        if speed < _DWELL_SPEED_THRESHOLD_KMH:
+            # Collect consecutive slow points
+            run = [pt]
+            j = i + 1
+            while j < len(points):
+                nxt = points[j]
+                nxt_speed = nxt.speed_kmh if nxt.speed_kmh is not None else 0.0
+                if nxt_speed < _DWELL_SPEED_THRESHOLD_KMH:
+                    run.append(nxt)
+                    j += 1
+                else:
+                    break
+
+            start_t = run[0].recorded_at
+            end_t   = run[-1].recorded_at
+            if start_t and end_t:
+                duration_min = (end_t - start_t).total_seconds() / 60.0
+                if duration_min >= _DWELL_MIN_DURATION_MINUTES:
+                    lats = [p.latitude for p in run if p.latitude is not None]
+                    lons = [p.longitude for p in run if p.longitude is not None]
+                    stops.append({
+                        "start_time": start_t.isoformat(),
+                        "end_time":   end_t.isoformat(),
+                        "duration_minutes": round(duration_min, 1),
+                        "centroid_lat": round(sum(lats) / len(lats), 6) if lats else None,
+                        "centroid_lon": round(sum(lons) / len(lons), 6) if lons else None,
+                    })
+            i = j
+        else:
+            i += 1
+
+    total_dwell = round(sum(s["duration_minutes"] for s in stops), 1)
+    return {
+        "shipment_id": shipment_id,
+        "total_dwell_minutes": total_dwell,
+        "stops": stops,
+    }

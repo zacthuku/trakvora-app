@@ -24,6 +24,9 @@ def _check_password(v: str) -> str:
     return v
 
 
+CURRENT_TERMS_VERSION = "v1.0"
+
+
 class UserRegister(BaseModel):
     email: EmailStr
     phone: str = Field(..., min_length=8, max_length=25)
@@ -32,6 +35,12 @@ class UserRegister(BaseModel):
     password: str = Field(..., min_length=8)
     role: UserRole
     country: str = Field(default="KE", min_length=2, max_length=2)
+    national_id: str | None = Field(None, max_length=50)
+    kra_pin: str | None = Field(None, max_length=20)
+    # Optional — links registration to an existing invite token
+    invite_token: str | None = None
+    # Must be True — stored with timestamp + version on the user record
+    terms_accepted: bool = False
 
     @field_validator("password")
     @classmethod
@@ -46,16 +55,41 @@ class UserRegister(BaseModel):
             raise ValueError("Country must be a valid 2-letter ISO code (e.g. KE, UG, US)")
         return v
 
+    @field_validator("kra_pin")
+    @classmethod
+    def validate_kra_pin(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        v = v.strip().upper()
+        # Kenya KRA PIN: letter + 9 digits + letter (e.g. P000111111A)
+        # Only enforce the Kenya format; other countries pass through
+        if re.match(r"^[A-Z]", v) and len(v) == 11:
+            if not re.match(r"^[A-Z]\d{9}[A-Z]$", v):
+                raise ValueError("Invalid KRA PIN format. Expected format: P000111111A (letter + 9 digits + letter)")
+        return v
+
+    @field_validator("terms_accepted")
+    @classmethod
+    def must_accept_terms(cls, v: bool) -> bool:
+        if not v:
+            raise ValueError("You must accept the Trakvora Terms of Service to register")
+        return v
+
 
 class UserLogin(BaseModel):
     email: EmailStr
     password: str
 
 
+class PhoneLoginRequest(BaseModel):
+    phone: str = Field(..., min_length=8, max_length=25)
+
+
 class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
+    is_new_user: bool = False
 
 
 class OTPRequiredResponse(BaseModel):
@@ -91,6 +125,48 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class VerifyResetOtpRequest(BaseModel):
+    email: EmailStr
+    code: str = Field(..., min_length=6, max_length=6)
+
+
+class ResetPasswordRequest(BaseModel):
+    reset_token: str
+    new_password: str = Field(..., min_length=8)
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_new_password(cls, v: str) -> str:
+        return _check_password(v)
+
+
+class PasswordResetTokenResponse(BaseModel):
+    reset_token: str
+
+
+class ForgotPasswordPhoneRequest(BaseModel):
+    phone: str = Field(..., min_length=7, max_length=25)
+
+
+class VerifyResetOtpPhoneRequest(BaseModel):
+    phone: str = Field(..., min_length=7, max_length=25)
+    code: str = Field(..., min_length=6, max_length=6)
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str = Field(..., min_length=8)
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_new_password(cls, v: str) -> str:
+        return _check_password(v)
+
+
 class UserUpdate(BaseModel):
     full_name: str | None = None
     company_name: str | None = None
@@ -98,6 +174,18 @@ class UserUpdate(BaseModel):
     profile_photo_url: str | None = None
     otp_channel: str | None = None
     country: str | None = None
+    kra_pin: str | None = Field(None, max_length=20)
+
+    @field_validator("kra_pin")
+    @classmethod
+    def validate_kra_pin_update(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        v = v.strip().upper()
+        if re.match(r"^[A-Z]", v) and len(v) == 11:
+            if not re.match(r"^[A-Z]\d{9}[A-Z]$", v):
+                raise ValueError("Invalid KRA PIN format. Expected format: P000111111A (letter + 9 digits + letter)")
+        return v
 
     @field_validator("country")
     @classmethod
@@ -110,9 +198,14 @@ class UserUpdate(BaseModel):
         return v
 
 
+class RoleChangeRequest(BaseModel):
+    role: UserRole
+
+
 class GoogleAuthRequest(BaseModel):
     access_token: str
     role: UserRole | None = None
+    terms_accepted: bool = False
 
 
 class GoogleNewUserResponse(BaseModel):
@@ -142,6 +235,11 @@ class UserOut(BaseModel):
     created_at: datetime
     kyc_status: KycStatus = KycStatus.unverified
     kyc_rejection_reason: str | None = None
+    kyc_selfie_url: str | None = None
+    kra_pin: str | None = None
+    can_carry: bool = False
+    can_ship: bool = False
+    can_use_escrow: bool = False
 
 
 class UserPublicOut(BaseModel):

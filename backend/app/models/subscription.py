@@ -11,9 +11,13 @@ from app.models.base import Base
 
 class PlanTier(str, enum.Enum):
     free = "free"
-    fleet_basic = "fleet_basic"       # Up to 5 trucks
-    fleet_pro = "fleet_pro"           # Up to 25 trucks
-    enterprise = "enterprise"         # Unlimited + API access
+    fleet_basic = "fleet_basic"
+    fleet_pro = "fleet_pro"
+    enterprise = "enterprise"
+    shipper_free = "shipper_free"
+    shipper_growth = "shipper_growth"
+    shipper_business = "shipper_business"
+    driver_free = "driver_free"
 
 
 class BillingCycle(str, enum.Enum):
@@ -43,6 +47,8 @@ class SubscriptionPlan(Base):
     includes_priority_matching: Mapped[bool] = mapped_column(Boolean, default=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    target_role: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    max_loads_per_month: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     subscriptions = relationship("Subscription", back_populates="plan")
 

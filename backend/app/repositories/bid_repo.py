@@ -18,7 +18,7 @@ class BidRepository:
     async def list_by_load(self, load_id: uuid.UUID) -> list[Bid]:
         result = await self.db.execute(
             select(Bid)
-            .options(selectinload(Bid.owner))
+            .options(selectinload(Bid.owner), selectinload(Bid.truck))
             .where(Bid.load_id == load_id)
             .order_by(Bid.amount_kes.asc())
         )

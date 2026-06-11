@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -8,6 +9,17 @@ from app.database import get_db
 from app.dependencies import require_admin_role
 from app.models.user import AdminRole, User, UserRole
 from app.schemas.field_ops import AssignAdminRole, PromoteUser
+from app.services import email_service
+
+_ADMIN_ROLE_LABELS = {
+    "super_admin": "Super Admin",
+    "operations_admin": "Operations Admin",
+    "finance_admin": "Finance Admin",
+    "field_inspector": "Field Inspector",
+    "iot_technician": "IoT Technician",
+    "compliance_officer": "Compliance Officer",
+    "support_agent": "Support Agent",
+}
 
 router = APIRouter(prefix="/admin/workforce", tags=["workforce"])
 
@@ -82,9 +94,16 @@ async def promote_to_admin(
     if not target:
         raise HTTPException(404, "User not found")
 
+    target.original_role = target.role
     target.role = UserRole.admin
     target.admin_role = role_enum
     await db.commit()
+
+    role_label = _ADMIN_ROLE_LABELS.get(role_enum.value, role_enum.value)
+    asyncio.create_task(
+        email_service.send_admin_appointment_email(target.email, target.full_name, role_label)
+    )
+
     return {
         "user_id": str(target.id),
         "full_name": target.full_name,

@@ -1,3 +1,4 @@
+import secrets
 import uuid
 from datetime import datetime
 
@@ -35,6 +36,27 @@ class Shipment(Base):
     carrier_rating: Mapped[int | None] = mapped_column(Integer, nullable=True)
     shipper_rating_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     carrier_rating_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # POD (Proof of Delivery) enriched fields — added in migration 0039
+    pod_signature_url:  Mapped[str | None] = mapped_column(String(500), nullable=True)
+    delivery_latitude:  Mapped[float | None] = mapped_column(Float, nullable=True)
+    delivery_longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    # Unattended delivery GPS stamp fields — added in migration 0054
+    delivery_location_name: Mapped[str | None] = mapped_column(String(480), nullable=True)
+    auto_delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    delivery_method: Mapped[str | None] = mapped_column(String(20), nullable=True)  # attended | unattended_gps | auto_tracker
+
+    # Payment mode mirrors Load.payment_mode at booking time
+    payment_mode: Mapped[str] = mapped_column(String(10), nullable=False, default="direct", server_default="direct")
+    # Set when shipper confirms direct payment to trucker (direct mode only)
+    direct_payment_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Shareable tracking link token — generated on creation, never changes
+    share_token: Mapped[str] = mapped_column(
+        String(32), nullable=False, unique=True,
+        default=lambda: secrets.token_urlsafe(24),
+    )
 
     load = relationship("Load", foreign_keys=[load_id])
     truck = relationship("Truck", foreign_keys=[truck_id])

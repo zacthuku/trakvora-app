@@ -65,6 +65,17 @@ class LoadNotAvailable(ConflictError):
         super().__init__("Load is no longer available for bidding")
 
 
-class InsufficientFunds(ConflictError):
-    def __init__(self):
+class ActiveJobConflict(ConflictError):
+    def __init__(self, detail: str):
+        super().__init__(detail)
+
+
+class InsufficientFunds(Exception):
+    """Raised when a wallet has insufficient balance for an operation.
+
+    Intentionally NOT a subclass of HTTPException so callers can catch it
+    cleanly and build a structured response with the shortfall amount.
+    """
+    def __init__(self, shortfall: float | None = None):
+        self.shortfall = shortfall
         super().__init__("Insufficient wallet balance")

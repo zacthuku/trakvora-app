@@ -36,6 +36,16 @@ class ShipmentRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_active_by_truck(self, truck_id: uuid.UUID) -> Shipment | None:
+        from app.models.load import LoadStatus
+        active = [LoadStatus.booked, LoadStatus.en_route_pickup, LoadStatus.loaded, LoadStatus.in_transit]
+        result = await self.db.execute(
+            select(Shipment)
+            .where(Shipment.truck_id == truck_id, Shipment.status.in_(active))
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
     async def get_active_by_owner(self, owner_id: uuid.UUID) -> list[Shipment]:
         from app.models.load import LoadStatus
         active = [LoadStatus.booked, LoadStatus.en_route_pickup, LoadStatus.loaded, LoadStatus.in_transit]

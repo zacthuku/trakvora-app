@@ -12,6 +12,7 @@ from app.models.load import Load, LoadStatus
 from app.models.shipment import Shipment
 from app.models.truck import Truck
 from app.models.user import User, UserRole
+from sqlalchemy import Float
 
 router = APIRouter(tags=["stats"])
 
@@ -54,6 +55,15 @@ async def public_stats(db: AsyncSession = Depends(get_db)):
         )
     )
 
+    # Platform rating — aggregate of all carrier ratings left on completed shipments
+    avg_row = (await db.execute(
+        select(
+            func.avg(Shipment.carrier_rating.cast(Float)),
+            func.count(Shipment.carrier_rating),
+        ).where(Shipment.carrier_rating.isnot(None))
+    )).one()
+    avg_rating_raw, total_ratings = avg_row
+
     return {
         "active_loads": active_loads or 0,
         "active_drivers": active_drivers or 0,
@@ -62,6 +72,8 @@ async def public_stats(db: AsyncSession = Depends(get_db)):
         "total_carriers": total_carriers or 0,
         "total_trucks": total_trucks or 0,
         "corridors_served": corridors or 0,
+        "avg_rating":    round(float(avg_rating_raw), 1) if avg_rating_raw else None,
+        "total_ratings": total_ratings or 0,
     }
 
 

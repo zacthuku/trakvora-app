@@ -58,6 +58,12 @@ class DriverOut(BaseModel):
     passport_photo_url: str | None
     verification_status: VerificationStatus
     ntsa_verified: bool
+    documents_submitted: bool = False
+    verification_notes: str | None = None
+    # NTSA automated licence check
+    licence_check_status: str = "unverified"
+    licence_check_at: datetime | None = None
+    licence_check_detail: str | None = None
     psv_badge_url: str | None
     police_clearance_url: str | None
     good_conduct_url: str | None
@@ -99,6 +105,7 @@ class DriverPublicOut(BaseModel):
 
 class DriverVerificationUpdate(BaseModel):
     verification_status: VerificationStatus
+    notes: str | None = None   # Admin rejection/approval notes
 
 
 class DriverWithUserOut(BaseModel):

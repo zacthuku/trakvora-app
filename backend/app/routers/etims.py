@@ -193,7 +193,7 @@ def _generate_invoice_pdf(invoice: EtimsInvoice) -> bytes:
 
     # Header
     story.append(Paragraph("TAX INVOICE", ParagraphStyle("h1", parent=styles["Heading1"], alignment=1)))
-    story.append(Paragraph("Trakvora Limited", bold))
+    story.append(Paragraph("Intellora Solutions Limited", bold))
     story.append(Paragraph(f"KRA PIN: {invoice.seller_pin}", styles["Normal"]))
     story.append(Spacer(1, 0.3*cm))
 
@@ -272,7 +272,7 @@ def _generate_invoice_pdf(invoice: EtimsInvoice) -> bytes:
     story.append(Spacer(1, 0.3*cm))
     story.append(Paragraph(
         "This is a KRA eTIMS compliant tax invoice. "
-        "Trakvora Limited is registered for VAT in Kenya (16%).",
+        "Intellora Solutions Limited is registered for VAT in Kenya (16%).",
         ParagraphStyle("small", parent=styles["Normal"], fontSize=8, textColor=colors.grey),
     ))
 

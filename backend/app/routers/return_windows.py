@@ -130,6 +130,46 @@ async def get_return_window_matches(
     return output
 
 
+@router.get("/browse", response_model=list[ReturnWindowOut])
+async def browse_return_windows(
+    origin: str | None = None,
+    destination: str | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> list[ReturnWindowOut]:
+    """Public endpoint — shippers & carriers browse available return legs."""
+    from app.dependencies import get_current_user
+    q = select(ReturnWindow).where(ReturnWindow.is_active == True)
+    if origin:
+        q = q.where(ReturnWindow.origin_location.ilike(f"%{origin}%"))
+    if destination:
+        q = q.where(ReturnWindow.destination_location.ilike(f"%{destination}%"))
+    result = await db.execute(q.order_by(ReturnWindow.created_at.desc()).limit(50))
+    return result.scalars().all()
+
+
+@router.patch("/{window_id}", response_model=ReturnWindowOut)
+async def toggle_return_window(
+    window_id: uuid.UUID,
+    payload: dict,
+    current_user: User = Depends(require_role(UserRole.owner)),
+    db: AsyncSession = Depends(get_db),
+) -> ReturnWindowOut:
+    result = await db.execute(
+        select(ReturnWindow).where(
+            ReturnWindow.id == window_id,
+            ReturnWindow.driver_id == current_user.id,
+        )
+    )
+    window = result.scalar_one_or_none()
+    if not window:
+        raise HTTPException(status_code=404, detail="Return window not found")
+    if "is_active" in payload:
+        window.is_active = bool(payload["is_active"])
+    await db.commit()
+    await db.refresh(window)
+    return window
+
+
 @router.delete("/{window_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_return_window(
     window_id: uuid.UUID,

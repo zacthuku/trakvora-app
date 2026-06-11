@@ -10,8 +10,8 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-FROM_NO_REPLY = "no-reply@trakvora.com"
-FROM_SUPPORT = "support@trakvora.com"
+FROM_NO_REPLY = settings.smtp_from_email
+FROM_SUPPORT = settings.support_email
 
 
 def _get_from_email() -> str:
@@ -84,6 +84,39 @@ async def send_otp_email(to: str, code: str, name: str = "there", purpose: str =
         logger.error(f"Failed to send OTP email to {to}: {exc}")
 
 
+def _password_reset_otp_html(name: str, code: str) -> str:
+    return f"""
+    <div style="font-family:Inter,sans-serif;max-width:480px;margin:0 auto;padding:32px;background:#f8f9fa;border-radius:12px;">
+      <h2 style="color:#041627;font-size:24px;margin-bottom:8px;">Reset your trakvora password</h2>
+      <p style="color:#555;margin-bottom:24px;">Hi {name}, use this code to reset your password. If you didn't request a reset, you can safely ignore this email — your password will not change.</p>
+      <div style="background:#041627;color:#fe6a34;font-size:36px;font-weight:700;letter-spacing:12px;
+                  text-align:center;padding:20px;border-radius:8px;margin-bottom:24px;">
+        {code}
+      </div>
+      <p style="color:#888;font-size:13px;">This code expires in <strong>10 minutes</strong>. Never share it with anyone, including trakvora staff.</p>
+      <hr style="border:none;border-top:1px solid #e0e0e0;margin:24px 0;"/>
+      <p style="color:#aaa;font-size:12px;">trakvora — East Africa Freight Exchange</p>
+    </div>
+    """
+
+
+async def send_password_reset_otp_email(to: str, code: str, name: str = "there") -> None:
+    logger.info(f"[PasswordResetOTP] {to} → {code}")
+
+    if not settings.resend_api_key and (not settings.smtp_username or not settings.smtp_host):
+        logger.warning("No email transport configured; skipping password-reset OTP email.")
+        return
+
+    try:
+        html = _password_reset_otp_html(name, code)
+        await asyncio.to_thread(
+            _send_email, to, "trakvora — Reset your password", html, _get_from_email()
+        )
+        logger.info(f"Sent password-reset OTP email to {to}")
+    except Exception as exc:
+        logger.error(f"Failed to send password-reset OTP email to {to}: {exc}")
+
+
 def _welcome_html(name: str, role: str) -> str:
     role_lines = {
         "shipper": ("Post your first load", "Connect with vetted carriers across East Africa and move cargo with confidence."),
@@ -105,7 +138,7 @@ def _welcome_html(name: str, role: str) -> str:
       </div>
       <p style="color:#888;font-size:13px;">
         Questions? Reply to this email or write to
-        <a href="mailto:support@trakvora.com" style="color:#fe6a34;">support@trakvora.com</a>.
+        <a href="mailto:{settings.support_email}" style="color:#fe6a34;">{settings.support_email}</a>.
       </p>
       <hr style="border:none;border-top:1px solid #e0e0e0;margin:24px 0;"/>
       <p style="color:#aaa;font-size:12px;">trakvora — East Africa Freight Exchange</p>
@@ -170,7 +203,7 @@ def _admin_appointment_html(name: str, role_label: str) -> str:
         <p style="color:#fe6a34;font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;margin:0 0 6px;">Your Role</p>
         <p style="color:#fff;font-size:18px;font-weight:700;margin:0;">{role_label}</p>
       </div>
-      <p style="color:#888;font-size:13px;">Questions? Contact <a href="mailto:support@trakvora.com" style="color:#fe6a34;">support@trakvora.com</a>.</p>
+      <p style="color:#888;font-size:13px;">Questions? Contact <a href="mailto:{settings.support_email}" style="color:#fe6a34;">{settings.support_email}</a>.</p>
       <hr style="border:none;border-top:1px solid #e0e0e0;margin:24px 0;"/>
       <p style="color:#aaa;font-size:12px;">trakvora — East Africa Freight Exchange</p>
     </div>
@@ -232,8 +265,9 @@ async def send_support_ticket_email(
     subject: str,
     load_ref: str | None,
     message: str,
-    support_email: str = "support@trakvora.com",
+    support_email: str | None = None,
 ) -> None:
+    support_email = support_email or settings.support_email
     logger.info(f"[SupportTicket] from={user_email} type={ticket_type}")
     if not settings.resend_api_key and (not settings.smtp_username or not settings.smtp_host):
         logger.warning("No email transport configured; skipping support ticket email.")
@@ -562,6 +596,103 @@ async def send_demo_request_internal(lead: dict, support_email: str) -> None:
         logger.error(f"Failed to send demo internal email: {exc}")
 
 
+def _invitation_html(inviter_name: str, role: str, company_name: str | None, invite_url: str) -> str:
+    context = f"join <strong>{company_name}</strong>" if company_name else "join trakvora"
+    role_display = role.replace("_", " ").title()
+    return f"""
+    <div style="font-family:Inter,sans-serif;max-width:520px;margin:0 auto;padding:40px 32px;background:#f8f9fa;border-radius:12px;">
+      <div style="background:#041627;padding:16px 24px;border-radius:8px 8px 0 0;">
+        <span style="color:#fe6a34;font-size:20px;font-weight:800;">TRAK<span style="color:#fff;">VORA</span></span>
+      </div>
+      <div style="background:#fff;border:1px solid #e0e0e0;border-top:none;border-radius:0 0 8px 8px;padding:28px;">
+        <h2 style="color:#041627;font-size:22px;font-weight:700;margin:0 0 8px;">
+          You've been invited!
+        </h2>
+        <p style="color:#555;font-size:15px;margin:0 0 24px;">
+          <strong>{inviter_name}</strong> has invited you to {context} as <strong>{role_display}</strong>.
+          Click the button below to create your account and get started.
+        </p>
+        <a href="{invite_url}"
+           style="display:inline-block;background:#fe6a34;color:#fff;font-weight:700;
+                  font-size:15px;padding:12px 28px;border-radius:8px;text-decoration:none;">
+          Accept &amp; Create Account
+        </a>
+        <p style="color:#aaa;font-size:12px;margin-top:20px;">
+          This invite link expires in 7 days. If you weren't expecting this email, you can safely ignore it.
+        </p>
+      </div>
+      <p style="color:#aaa;font-size:11px;margin-top:16px;text-align:center;">
+        trakvora — East Africa Freight Exchange
+      </p>
+    </div>
+    """
+
+
+async def send_invitation_email(
+    to_email: str,
+    inviter_name: str,
+    role: str,
+    company_name: str | None,
+    invite_url: str,
+) -> None:
+    logger.info(f"[Invitation] to={to_email} from={inviter_name} role={role}")
+    if not settings.resend_api_key and (not settings.smtp_username or not settings.smtp_host):
+        logger.warning("No email transport configured; skipping invitation email.")
+        return
+    try:
+        subject = (
+            f"You've been invited to join {company_name} on trakvora"
+            if company_name
+            else "You've been invited to trakvora"
+        )
+        html = _invitation_html(inviter_name, role, company_name, invite_url)
+        await asyncio.to_thread(_send_email, to_email, subject, html, _get_from_email())
+        logger.info(f"Sent invitation email to {to_email}")
+    except Exception as exc:
+        logger.error(f"Failed to send invitation email to {to_email}: {exc}")
+
+
+async def send_driver_account_created_email(to: str, driver_name: str, owner_name: str) -> None:
+    """Sent when a fleet owner registers a driver on their behalf."""
+    logger.info(f"[DriverAccount] account created for {to} by {owner_name}")
+    login_url = f"{settings.frontend_url}/login"
+    reset_url = f"{settings.frontend_url}/forgot-password"
+    html = f"""
+    <div style="font-family:Inter,sans-serif;max-width:520px;margin:0 auto;padding:40px 32px;background:#f8f9fa;border-radius:12px;">
+      <div style="background:#041627;padding:16px 24px;border-radius:8px 8px 0 0;">
+        <span style="color:#fe6a34;font-size:20px;font-weight:800;">TRAK<span style="color:#fff;">VORA</span></span>
+      </div>
+      <div style="background:#fff;border:1px solid #e0e0e0;border-top:none;border-radius:0 0 8px 8px;padding:28px;">
+        <h2 style="color:#041627;font-size:22px;font-weight:700;margin:0 0 8px;">Welcome to Trakvora, {driver_name}!</h2>
+        <p style="color:#555;font-size:15px;margin:0 0 16px;">
+          <strong>{owner_name}</strong> has created your driver account on Trakvora.
+          You can now receive trips and track your earnings.
+        </p>
+        <p style="color:#555;font-size:15px;margin:0 0 24px;">
+          To set your password and access your account, click the button below:
+        </p>
+        <a href="{reset_url}"
+           style="display:inline-block;background:#fe6a34;color:#fff;font-weight:700;
+                  font-size:15px;padding:12px 28px;border-radius:8px;text-decoration:none;">
+          Set My Password
+        </a>
+        <p style="color:#aaa;font-size:12px;margin-top:20px;">
+          Use your email address <strong>{to}</strong> to log in at
+          <a href="{login_url}" style="color:#fe6a34;">{login_url}</a>
+        </p>
+      </div>
+      <p style="color:#aaa;font-size:11px;margin-top:16px;text-align:center;">
+        trakvora — East Africa Freight Exchange
+      </p>
+    </div>
+    """
+    try:
+        await asyncio.to_thread(_send_email, to, "Your Trakvora driver account is ready", html, _get_from_email())
+        logger.info(f"Sent driver account created email to {to}")
+    except Exception as exc:
+        logger.error(f"Failed to send driver account created email to {to}: {exc}")
+
+
 async def send_demo_confirmation(to_email: str, name: str) -> None:
     logger.info(f"[Demo] Confirmation to {to_email}")
     if not settings.resend_api_key and (not settings.smtp_username or not settings.smtp_host):
@@ -575,3 +706,111 @@ async def send_demo_confirmation(to_email: str, name: str) -> None:
         logger.info(f"Sent demo confirmation to {to_email}")
     except Exception as exc:
         logger.error(f"Failed to send demo confirmation to {to_email}: {exc}")
+
+
+async def send_scheduled_report_email(
+    to: str,
+    name: str,
+    report_type: str,
+    frequency: str,
+    report_data: dict,
+) -> None:
+    """Send a scheduled report summary email."""
+    if not settings.resend_api_key and (not settings.smtp_username or not settings.smtp_host):
+        logger.warning("No email transport configured; skipping scheduled report email.")
+        return
+    type_label = report_type.replace("_", " ").title()
+    freq_label = frequency.title()
+    rows_html = ""
+    for key, val in (report_data.items() if isinstance(report_data, dict) else []):
+        label = str(key).replace("_", " ").title()
+        rows_html += f"<tr><td style='padding:6px 12px;color:#64748b'>{label}</td><td style='padding:6px 12px;font-weight:600'>{val}</td></tr>"
+    html = f"""
+    <div style="font-family:Inter,sans-serif;max-width:600px;margin:auto">
+      <div style="background:#041727;color:#fff;padding:24px 32px;border-radius:12px 12px 0 0">
+        <div style="font-size:22px;font-weight:700;letter-spacing:-0.5px">trakvora</div>
+        <div style="font-size:14px;opacity:.7;margin-top:4px">{freq_label} {type_label} Report</div>
+      </div>
+      <div style="background:#fff;padding:32px;border:1px solid #e2e8f0;border-top:0;border-radius:0 0 12px 12px">
+        <p style="color:#374151;margin-top:0">Hi {name},</p>
+        <p style="color:#374151">Here's your {freq_label.lower()} <strong>{type_label}</strong> summary:</p>
+        <table style="width:100%;border-collapse:collapse;background:#f8fafc;border-radius:8px;overflow:hidden">{rows_html}</table>
+        <p style="color:#9ca3af;font-size:12px;margin-top:24px">
+          To change your report preferences, visit your account settings on
+          <a href="https://app.trakvora.com" style="color:#fe6a34">trakvora</a>.
+        </p>
+      </div>
+    </div>
+    """
+    try:
+        await asyncio.to_thread(
+            _send_email, to, f"Your {freq_label} {type_label} Report — trakvora", html, FROM_NO_REPLY
+        )
+    except Exception as exc:
+        logger.error(f"Failed to send scheduled report email to {to}: {exc}")
+
+
+def _rating_prompt_html(name: str, route: str, rate_role: str) -> str:
+    action = "rate your carrier" if rate_role == "shipper" else "rate your shipper"
+    return f"""
+    <div style="font-family:Inter,sans-serif;max-width:520px;margin:0 auto;padding:40px 32px;background:#f8f9fa;border-radius:12px;">
+      <h2 style="color:#041627;font-size:22px;margin-bottom:4px;">How did the delivery go?</h2>
+      <p style="color:#555;font-size:15px;margin-bottom:28px;">Hi {name}, your shipment on <strong>{route}</strong> has been completed. Please take a moment to {action}.</p>
+      <div style="background:#041627;border-radius:8px;padding:20px 24px;margin-bottom:24px;">
+        <p style="color:#fe6a34;font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;margin:0 0 6px;">Route</p>
+        <p style="color:#fff;font-size:16px;font-weight:600;margin:0;">{route}</p>
+      </div>
+      <p style="color:#555;font-size:14px;">Log in to trakvora and go to your {'booking history' if rate_role == 'shipper' else 'earnings page'} to submit your rating.</p>
+      <hr style="border:none;border-top:1px solid #e0e0e0;margin:24px 0;"/>
+      <p style="color:#aaa;font-size:12px;">trakvora — East Africa Freight Exchange</p>
+    </div>
+    """
+
+
+async def send_rating_prompt_email(to: str, name: str, rate_role: str, route: str) -> None:
+    logger.info(f"[RatingPrompt] {to}")
+    if not settings.resend_api_key and (not settings.smtp_username or not settings.smtp_host):
+        logger.warning("No email transport configured; skipping rating prompt email.")
+        return
+    try:
+        html = _rating_prompt_html(name, route, rate_role)
+        await asyncio.to_thread(
+            _send_email, to, "Rate your delivery — trakvora", html, _get_from_email()
+        )
+        logger.info(f"Sent rating prompt email to {to}")
+    except Exception as exc:
+        logger.error(f"Failed to send rating prompt email to {to}: {exc}")
+
+
+def _rating_received_html(name: str, rating: int, route: str) -> str:
+    stars = "★" * rating + "☆" * (5 - rating)
+    return f"""
+    <div style="font-family:Inter,sans-serif;max-width:520px;margin:0 auto;padding:40px 32px;background:#f8f9fa;border-radius:12px;">
+      <h2 style="color:#041627;font-size:22px;margin-bottom:4px;">You received a new rating!</h2>
+      <p style="color:#555;font-size:15px;margin-bottom:28px;">Hi {name}, someone left you a rating on a recent delivery.</p>
+      <div style="background:#041627;border-radius:8px;padding:20px 24px;margin-bottom:24px;">
+        <p style="color:#fe6a34;font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;margin:0 0 6px;">Route</p>
+        <p style="color:#fff;font-size:16px;font-weight:600;margin:0 0 14px;">{route}</p>
+        <p style="color:#fe6a34;font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;margin:0 0 6px;">Rating</p>
+        <p style="color:#fff;font-size:28px;font-weight:700;margin:0;letter-spacing:2px;">{stars} {rating}/5</p>
+      </div>
+      <p style="color:#555;font-size:14px;">Log in to trakvora to see your updated rating and full review history.</p>
+      <hr style="border:none;border-top:1px solid #e0e0e0;margin:24px 0;"/>
+      <p style="color:#aaa;font-size:12px;">trakvora — East Africa Freight Exchange</p>
+    </div>
+    """
+
+
+async def send_rating_received_email(to: str, name: str, rating: int, route: str) -> None:
+    logger.info(f"[RatingReceived] {to}")
+    if not settings.resend_api_key and (not settings.smtp_username or not settings.smtp_host):
+        logger.warning("No email transport configured; skipping rating received email.")
+        return
+    try:
+        html = _rating_received_html(name, rating, route)
+        await asyncio.to_thread(
+            _send_email, to, f"You received a {rating}-star rating — trakvora", html, _get_from_email()
+        )
+        logger.info(f"Sent rating received email to {to}")
+    except Exception as exc:
+        logger.error(f"Failed to send rating received email to {to}: {exc}")

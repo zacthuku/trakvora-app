@@ -1,4 +1,23 @@
 services:
+  redis:
+    image: redis:7-alpine
+    restart: always
+    command: >
+      redis-server
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --requirepass ${REDIS_PASSWORD}
+      --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - internal
+
   db:
     image: postgres:15-alpine
     restart: always
@@ -23,15 +42,19 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     restart: always
+    volumes:
+      - uploads_data:/app/static/uploads
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       SECRET_KEY: ${SECRET_KEY}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
       REFRESH_TOKEN_EXPIRE_DAYS: ${REFRESH_TOKEN_EXPIRE_DAYS:-7}
-      FLUTTERWAVE_SECRET_KEY: ${FLUTTERWAVE_SECRET_KEY}
-      FLUTTERWAVE_WEBHOOK_SECRET: ${FLUTTERWAVE_WEBHOOK_SECRET}
-      FLUTTERWAVE_TRANSFER_CALLBACK_URL: ${FLUTTERWAVE_TRANSFER_CALLBACK_URL}
-      FLUTTERWAVE_REDIRECT_URL: ${FLUTTERWAVE_REDIRECT_URL}
+      INTASEND_PUBLIC_KEY: ${INTASEND_PUBLIC_KEY}
+      INTASEND_SECRET_KEY: ${INTASEND_SECRET_KEY}
+      INTASEND_WEBHOOK_SECRET: ${INTASEND_WEBHOOK_SECRET}
+      INTASEND_REDIRECT_URL: ${INTASEND_REDIRECT_URL}
+      INTASEND_WEBHOOK_URL: ${INTASEND_WEBHOOK_URL}
       SMILE_IDENTITY_API_KEY: ${SMILE_IDENTITY_API_KEY}
       SMILE_IDENTITY_PARTNER_ID: ${SMILE_IDENTITY_PARTNER_ID}
       AFRICASTALKING_API_KEY: ${AFRICASTALKING_API_KEY}
@@ -53,11 +76,55 @@ services:
       ETIMS_PASSWORD: ${ETIMS_PASSWORD}
       ETIMS_BRANCH_ID: ${ETIMS_BRANCH_ID:-00}
       ETIMS_SANDBOX: "false"
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_S3_BUCKET: ${AWS_S3_BUCKET:-}
+      AWS_REGION: ${AWS_REGION:-af-south-1}
+      GOOGLE_MAPS_SERVER_API_KEY: ${GOOGLE_MAPS_SERVER_API_KEY:-}
+      FIREBASE_SERVICE_ACCOUNT_KEY: ${FIREBASE_SERVICE_ACCOUNT_KEY:-}
       PYTHONDONTWRITEBYTECODE: "1"
       PYTHONUNBUFFERED: "1"
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - internal
+
+  celery_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: always
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      SECRET_KEY: ${SECRET_KEY}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      INTASEND_SECRET_KEY: ${INTASEND_SECRET_KEY}
+      INTASEND_WEBHOOK_SECRET: ${INTASEND_WEBHOOK_SECRET}
+      RESEND_API_KEY: ${RESEND_API_KEY}
+      AFRICASTALKING_API_KEY: ${AFRICASTALKING_API_KEY}
+      AFRICASTALKING_USERNAME: ${AFRICASTALKING_USERNAME:-production}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_S3_BUCKET: ${AWS_S3_BUCKET:-}
+      AWS_REGION: ${AWS_REGION:-af-south-1}
+      FIREBASE_SERVICE_ACCOUNT_KEY: ${FIREBASE_SERVICE_ACCOUNT_KEY:-}
+      ENVIRONMENT: production
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=4
     networks:
       - internal
 
@@ -71,6 +138,11 @@ services:
       VITE_API_URL: ${VITE_API_URL}
       VITE_GOOGLE_MAPS_API_KEY: ${VITE_GOOGLE_MAPS_API_KEY}
       VITE_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      VITE_FIREBASE_API_KEY: ${VITE_FIREBASE_API_KEY:-}
+      VITE_FIREBASE_PROJECT_ID: ${VITE_FIREBASE_PROJECT_ID:-}
+      VITE_FIREBASE_MESSAGING_SENDER_ID: ${VITE_FIREBASE_MESSAGING_SENDER_ID:-}
+      VITE_FIREBASE_APP_ID: ${VITE_FIREBASE_APP_ID:-}
+      VITE_FIREBASE_VAPID_KEY: ${VITE_FIREBASE_VAPID_KEY:-}
     command: sh -c "npm ci && npm run build"
     profiles:
       - build
@@ -127,6 +199,8 @@ services:
 
 volumes:
   postgres_data:
+  redis_data:
+  uploads_data:
   frontend_build:
   prometheus_data:
   grafana_data:

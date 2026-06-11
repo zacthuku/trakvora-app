@@ -1,8 +1,8 @@
 import enum
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Date, DateTime, Enum, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -68,6 +68,23 @@ class Truck(Base):
         default=VehicleServiceType.truck,
         nullable=True,
     )
+
+    # Compliance documents (columns added in migration 0018)
+    logbook_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    insurance_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    insurance_expiry: Mapped[date | None] = mapped_column(Date, nullable=True)
+    ntsa_inspection_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    ntsa_inspection_expiry: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+    # Admin verification notes (added in migration 0019)
+    verification_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Automated NTSA plate check (added in migration 0037)
+    # Values: "unverified" | "pending" | "passed" | "failed"
+    reg_check_status: Mapped[str] = mapped_column(String(20), default="unverified", nullable=False)
+    reg_check_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reg_check_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reg_check_owner: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     owner = relationship("User", foreign_keys=[owner_id])
     assigned_driver = relationship("Driver", foreign_keys=[assigned_driver_id])

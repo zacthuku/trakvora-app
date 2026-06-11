@@ -38,3 +38,33 @@ class Bid(Base):
     def bidder_company(self) -> str | None:
         u = self.__dict__.get("owner")
         return u.company_name if u else None
+
+    @property
+    def bidder_rating(self) -> float | None:
+        u = self.__dict__.get("owner")
+        return float(u.rating) if u and u.rating else None
+
+    @property
+    def truck_is_verified(self) -> bool | None:
+        t = self.__dict__.get("truck")
+        return t.is_verified if t is not None else None
+
+    @property
+    def truck_registration(self) -> str | None:
+        t = self.__dict__.get("truck")
+        return t.registration_number if t else None
+
+    @property
+    def truck_type_str(self) -> str | None:
+        t = self.__dict__.get("truck")
+        return str(t.truck_type) if t else None
+
+    @property
+    def truck_verification_score(self) -> float | None:
+        t = self.__dict__.get("truck")
+        return float(t.verification_score) if t and t.verification_score else None
+
+    @property
+    def bidder_partner_tier(self) -> str | None:
+        u = self.__dict__.get("owner")
+        return u.partner_tier.value if u and u.partner_tier else "standard"

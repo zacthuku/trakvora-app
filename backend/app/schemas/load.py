@@ -1,9 +1,10 @@
 import uuid
 from datetime import datetime
+from typing import List
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.models.load import BookingMode, CargoType, LoadStatus
+from app.models.load import BookingMode, CargoType, LoadPaymentMode, LoadStatus, LoadVisibility, TerrainDifficulty
 
 
 class LoadCreate(BaseModel):
@@ -30,6 +31,20 @@ class LoadCreate(BaseModel):
     special_instructions: str | None = None
     requires_insurance: bool = False
     direct_offer_user_id: uuid.UUID | None = None
+    direct_offer_user_ids: List[uuid.UUID] | None = None  # blast to up to 5 carriers simultaneously
+    scheduled_at: datetime | None = None  # defer publishing to this UTC time
+    terrain_difficulty: TerrainDifficulty = TerrainDifficulty.standard
+    payment_mode: LoadPaymentMode = LoadPaymentMode.direct
+    visibility: LoadVisibility = LoadVisibility.public
+    unattended_delivery: bool = False
+    is_urgent: bool = False
+
+    @field_validator("direct_offer_user_ids")
+    @classmethod
+    def check_max_carriers(cls, v):
+        if v is not None and len(v) > 5:
+            raise ValueError("Cannot send a direct offer to more than 5 carriers at once")
+        return v
 
 
 class LoadUpdate(BaseModel):
@@ -38,6 +53,11 @@ class LoadUpdate(BaseModel):
     special_instructions: str | None = None
     price_kes: float | None = None
     status: LoadStatus | None = None
+
+
+class ReOfferRequest(BaseModel):
+    user_ids: List[uuid.UUID] = Field(..., min_length=1, max_length=5)
+    price_kes: float | None = Field(None, gt=0)
 
 
 class LoadOut(BaseModel):
@@ -73,6 +93,13 @@ class LoadOut(BaseModel):
     created_at: datetime
     shipper_name: str | None = None
     shipper_company: str | None = None
+    scheduled_at: datetime | None = None
+    terrain_difficulty: TerrainDifficulty = TerrainDifficulty.standard
+    payment_mode: LoadPaymentMode = LoadPaymentMode.direct
+    visibility: LoadVisibility = LoadVisibility.public
+    unattended_delivery: bool = False
+    is_urgent: bool = False
+    all_offers_declined: bool = False
 
     @field_validator("requires_insurance", mode="before")
     @classmethod
@@ -104,3 +131,4 @@ class PublicLoadOut(BaseModel):
     bid_count: int = 0
     shipper_name: str | None = None
     shipper_company: str | None = None
+    is_urgent: bool = False

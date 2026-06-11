@@ -25,10 +25,24 @@ class ShipmentOut(BaseModel):
     delivered_at: datetime | None
     payment_confirmed_at: datetime | None
     dispute_open: bool
+    dispute_reason: str | None = None
+    dispute_opened_at: datetime | None = None
+    dispute_note: str | None = None
     delivery_code: str | None = None
     shipper_rating: int | None = None
     carrier_rating: int | None = None
+    shipper_rating_comment: str | None = None
+    carrier_rating_comment: str | None = None
     created_at: datetime
+    pod_signature_url:  str | None = None
+    delivery_latitude:  float | None = None
+    delivery_longitude: float | None = None
+    payment_mode:                str | None = "direct"
+    direct_payment_confirmed_at: datetime | None = None
+    delivery_location_name: str | None = None
+    auto_delivered_at: datetime | None = None
+    delivery_method: str | None = None
+    share_token: str | None = None
 
 
 class ShipmentStatusUpdate(BaseModel):
@@ -36,6 +50,14 @@ class ShipmentStatusUpdate(BaseModel):
     pickup_photo_urls: str | None = None
     delivery_photo_urls: str | None = None
     delivery_code: str | None = None
+    pod_signature_url:  str | None = None   # base64 PNG data URL or S3 URL after upload
+    delivery_latitude:  float | None = None
+    delivery_longitude: float | None = None
+    no_photo_reason:    str | None = None   # e.g. "no_smartphone", "camera_fault" — waives photo requirement
+
+
+class ConfirmDeliveryIn(BaseModel):
+    shipper_pod_urls: str | None = None  # comma-separated URLs; provided when driver had no phone
 
 
 class LocationUpdate(BaseModel):
@@ -45,6 +67,37 @@ class LocationUpdate(BaseModel):
     accuracy: float | None = None    # metres from GPS sensor
     speed_kmh: float | None = None
     heading: float | None = None     # 0-360 degrees
+
+
+class PublicShipmentSchema(BaseModel):
+    model_config = {"from_attributes": True}
+
+    id: uuid.UUID
+    load_id: uuid.UUID
+    status: LoadStatus
+    current_latitude: float | None
+    current_longitude: float | None
+    eta: datetime | None
+    delivered_at: datetime | None
+    delivery_code: str | None = None
+    delivery_method: str | None = None
+    payment_confirmed_at: datetime | None = None
+
+
+class CustomerConfirmDeliveryIn(BaseModel):
+    share_token: str
+    delivery_code: str
+
+
+class ShipmentContactOut(BaseModel):
+    shipper_name: str | None = None
+    shipper_company: str | None = None
+    shipper_phone: str | None = None
+    carrier_name: str | None = None
+    carrier_company: str | None = None
+    carrier_phone: str | None = None
+    driver_name: str | None = None
+    driver_phone: str | None = None
 
 
 class ConsignmentNoteOut(BaseModel):

@@ -1,0 +1,68 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Tailwind Preflight sets max-width:100% on all img elements which breaks Leaflet tile rendering */
+.leaflet-container img { max-width: none; }
+
+:root {
+  --color-primary: #041627;
+  --color-primary-container: #1a2b3c;
+  --color-secondary: #fe6a34;
+  --color-tertiary: #4fdbcc;
+}
+
+@layer base {
+  body {
+    @apply font-sans text-slate-800 bg-surface dark:bg-slate-950 dark:text-slate-100;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-heading;
+  }
+}
+
+@layer components {
+  .sidebar-link {
+    @apply flex items-center gap-3 px-4 py-2.5 text-slate-400 rounded hover:bg-slate-800 hover:text-white transition-colors cursor-pointer;
+  }
+  .sidebar-link.active {
+    @apply bg-slate-800 text-secondary border-l-4 border-secondary;
+  }
+
+  .card {
+    @apply bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm;
+  }
+
+  .card-accent {
+    @apply card border-t-2 border-t-secondary;
+  }
+
+  .btn-primary {
+    @apply bg-secondary text-white font-semibold px-4 py-2 rounded hover:opacity-90 transition-opacity disabled:opacity-50;
+  }
+
+  .btn-outline {
+    @apply border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 font-medium px-4 py-2 rounded hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors;
+  }
+
+  .badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+
+  .data-id {
+    @apply font-data-mono text-sm text-slate-500 dark:text-slate-400;
+  }
+
+  .status-timeline-dot {
+    @apply w-3 h-3 rounded-full border-2;
+  }
+
+  /* Shared input style for dark mode */
+  .input-base {
+    @apply bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700
+           text-slate-800 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500
+           focus:outline-none focus:ring-1 focus:ring-secondary focus:border-secondary
+           rounded-lg px-3 py-2 text-sm transition-colors;
+  }
+}

@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import and_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.otp import EmailOTP
+from app.models.otp import EmailOTP, PhoneOTP
 
 
 class OTPRepository:
@@ -38,6 +38,41 @@ class OTPRepository:
                 )
             )
             .order_by(EmailOTP.created_at.desc())
+            .limit(1)
+        )
+        otp = result.scalar_one_or_none()
+        if not otp:
+            return False
+        otp.is_used = True
+        await self.db.commit()
+        return True
+
+    async def create_phone(self, phone: str) -> str:
+        await self.db.execute(
+            update(PhoneOTP)
+            .where(and_(PhoneOTP.phone == phone, PhoneOTP.is_used == False))
+            .values(is_used=True)
+        )
+        code = f"{secrets.randbelow(1_000_000):06d}"
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
+        otp = PhoneOTP(phone=phone, code=code, expires_at=expires_at)
+        self.db.add(otp)
+        await self.db.commit()
+        return code
+
+    async def verify_phone(self, phone: str, code: str) -> bool:
+        now = datetime.now(timezone.utc)
+        result = await self.db.execute(
+            select(PhoneOTP)
+            .where(
+                and_(
+                    PhoneOTP.phone == phone,
+                    PhoneOTP.code == code,
+                    PhoneOTP.is_used == False,
+                    PhoneOTP.expires_at > now,
+                )
+            )
+            .order_by(PhoneOTP.created_at.desc())
             .limit(1)
         )
         otp = result.scalar_one_or_none()

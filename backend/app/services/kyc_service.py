@@ -55,6 +55,30 @@ def _verify_sync(partner_id: str, api_key: str, id_type: str, id_number: str, co
     return KycStatus.rejected
 
 
+async def verify_driver_licence(licence_number: str, country: str = "KE") -> tuple[bool, str]:
+    """
+    Verify a driving licence number against NTSA records via Smile Identity.
+    Returns (passed, detail_message).
+
+    Falls back to (False, reason) when credentials are not configured or the
+    service is unavailable — the caller should treat this as "manual check required".
+    """
+    partner_id = getattr(settings, "smile_identity_partner_id", "")
+    api_key    = getattr(settings, "smile_identity_api_key", "")
+
+    if not api_key or not partner_id:
+        logger.info("[NTSA] Smile Identity not configured — queued for manual licence check")
+        return False, "Smile Identity not configured — manual check required"
+
+    logger.info(f"[NTSA] Checking driving licence: {licence_number} ({country})")
+    status = await asyncio.to_thread(
+        _verify_sync, partner_id, api_key, "DRIVERS_LICENSE", licence_number, country
+    )
+    if status == KycStatus.approved:
+        return True, "Verified against NTSA records via Smile Identity"
+    return False, "Licence not found in NTSA records — verify manually"
+
+
 async def submit_kyc(user: User, id_type: str, id_number: str) -> tuple[KycStatus, str | None]:
     """
     Verify user identity via Smile Identity.

@@ -1,10 +1,22 @@
 services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   db:
     image: postgres:15-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-trakvora}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-trakvora}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:-trakvora}
     ports:
       - "5433:5432"
@@ -23,18 +35,38 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-trakvora}:${POSTGRES_PASSWORD:-trakvora}@db:5432/${POSTGRES_DB:-trakvora}
-      SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
-      FLUTTERWAVE_SECRET_KEY: ${FLUTTERWAVE_SECRET_KEY:-}
-      FLUTTERWAVE_WEBHOOK_SECRET: ${FLUTTERWAVE_WEBHOOK_SECRET:-}
-      FLUTTERWAVE_TRANSFER_CALLBACK_URL: ${FLUTTERWAVE_TRANSFER_CALLBACK_URL:-}
-      FLUTTERWAVE_REDIRECT_URL: ${FLUTTERWAVE_REDIRECT_URL:-}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-trakvora}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-trakvora}
+      TEST_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-trakvora}:${POSTGRES_PASSWORD}@db:5432/trakvora_test
+      SECRET_KEY: ${SECRET_KEY}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      INTASEND_PUBLIC_KEY: ${INTASEND_PUBLIC_KEY:-}
+      INTASEND_SECRET_KEY: ${INTASEND_SECRET_KEY:-}
+      INTASEND_WEBHOOK_SECRET: ${INTASEND_WEBHOOK_SECRET:-}
+      INTASEND_REDIRECT_URL: ${INTASEND_REDIRECT_URL:-http://localhost:5173/shipper/wallet}
+      INTASEND_WEBHOOK_URL: ${INTASEND_WEBHOOK_URL:-}
       SMILE_IDENTITY_API_KEY: ${SMILE_IDENTITY_API_KEY:-}
+      SMILE_IDENTITY_PARTNER_ID: ${SMILE_IDENTITY_PARTNER_ID:-}
+      YOURVERIFY_API_KEY: ${YOURVERIFY_API_KEY:-}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
       SUPPORT_WHATSAPP: ${SUPPORT_WHATSAPP:-+254700000000}
       SUPPORT_EMAIL: ${SUPPORT_EMAIL:-support@trakvora.com}
       ENVIRONMENT: ${ENVIRONMENT:-development}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_S3_BUCKET: ${AWS_S3_BUCKET:-}
+      AWS_REGION: ${AWS_REGION:-af-south-1}
+      GOOGLE_MAPS_SERVER_API_KEY: ${GOOGLE_MAPS_SERVER_API_KEY:-}
+      FIREBASE_SERVICE_ACCOUNT_KEY: ${FIREBASE_SERVICE_ACCOUNT_KEY:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      AFRICASTALKING_API_KEY: ${AFRICASTALKING_API_KEY:-}
+      AFRICASTALKING_USERNAME: ${AFRICASTALKING_USERNAME:-sandbox}
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-noreply@trakvora.com}
+      SMTP_TLS: ${SMTP_TLS:-true}
       PYTHONDONTWRITEBYTECODE: "1"
       PYTHONUNBUFFERED: "1"
     volumes:
@@ -42,7 +74,40 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+      redis:
+        condition: service_healthy
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+
+  celery_worker:
+    build: ./backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-trakvora}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-trakvora}
+      SECRET_KEY: ${SECRET_KEY}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      INTASEND_SECRET_KEY: ${INTASEND_SECRET_KEY:-}
+      INTASEND_WEBHOOK_SECRET: ${INTASEND_WEBHOOK_SECRET:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      AFRICASTALKING_API_KEY: ${AFRICASTALKING_API_KEY:-}
+      AFRICASTALKING_USERNAME: ${AFRICASTALKING_USERNAME:-sandbox}
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-noreply@trakvora.com}
+      SMTP_TLS: ${SMTP_TLS:-true}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      FIREBASE_SERVICE_ACCOUNT_KEY: ${FIREBASE_SERVICE_ACCOUNT_KEY:-}
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=4
 
   frontend:
     image: node:20-alpine
@@ -53,12 +118,39 @@ services:
     environment:
       VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
       VITE_SUPPORT_WHATSAPP: ${SUPPORT_WHATSAPP:-+254700000000}
+      VITE_GOOGLE_MAPS_API_KEY: ${VITE_GOOGLE_MAPS_API_KEY:-}
+      VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-}
+      VITE_FIREBASE_API_KEY: ${VITE_FIREBASE_API_KEY:-}
+      VITE_FIREBASE_PROJECT_ID: ${VITE_FIREBASE_PROJECT_ID:-}
+      VITE_FIREBASE_MESSAGING_SENDER_ID: ${VITE_FIREBASE_MESSAGING_SENDER_ID:-}
+      VITE_FIREBASE_APP_ID: ${VITE_FIREBASE_APP_ID:-}
+      VITE_FIREBASE_VAPID_KEY: ${VITE_FIREBASE_VAPID_KEY:-}
     volumes:
       - ./frontend:/app
-      - /app/node_modules
+      - frontend_node_modules:/app/node_modules
     depends_on:
       - backend
-    command: sh -c "npm install && npm run dev -- --host"
+    # Only run npm install when node_modules is absent (skips 30-90 s on restarts)
+    command: sh -c "[ -d node_modules/.bin ] || npm install && npm run dev -- --host"
+
+  # Expose local backend to the internet for IntaSend webhooks.
+  # Usage: set NGROK_AUTHTOKEN in .env, then `docker compose up ngrok`
+  # Get your public URL from http://localhost:4040 (ngrok web UI).
+  # Copy the URL and set INTASEND_WEBHOOK_URL=https://<id>.ngrok-free.app/webhooks/intasend
+  # Also register that URL in sandbox.intasend.com → Settings → Webhooks.
+  ngrok:
+    image: ngrok/ngrok:latest
+    restart: unless-stopped
+    command: http backend:8000
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:-}
+    ports:
+      - "4040:4040"
+    depends_on:
+      - backend
+    profiles:
+      - ngrok
 
 volumes:
   postgres_data:
+  frontend_node_modules:

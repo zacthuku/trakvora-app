@@ -10,12 +10,14 @@ from app.models.base import Base
 
 
 class AlertType(str, enum.Enum):
-    no_ping          = "no_ping"
-    duplicate_id     = "duplicate_id"
-    tamper           = "tamper"
-    low_battery      = "low_battery"
-    signal_lost      = "signal_lost"
-    unrealistic_jump = "unrealistic_jump"
+    no_ping           = "no_ping"
+    duplicate_id      = "duplicate_id"
+    tamper            = "tamper"
+    low_battery       = "low_battery"
+    signal_lost       = "signal_lost"
+    unrealistic_jump  = "unrealistic_jump"
+    route_deviation   = "route_deviation"   # driver strayed > 25 km from corridor
+    offline_driver    = "offline_driver"    # shipment active but no GPS for > 60 min
 
 
 class AlertSeverity(str, enum.Enum):

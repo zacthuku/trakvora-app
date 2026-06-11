@@ -1,7 +1,8 @@
 import enum
 import uuid
+from datetime import datetime
 
-from sqlalchemy import Boolean, Enum, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -60,7 +61,22 @@ class Driver(Base):
     seeking_employment: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Truck assignment
-    current_truck_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("trucks.id"))
+    # use_alter=True breaks the circular FK cycle with trucks.assigned_driver_id
+    # so SQLAlchemy can emit ALTER TABLE DROP CONSTRAINT before DROP TABLE in tests.
+    current_truck_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("trucks.id", use_alter=True, name="fk_drivers_current_truck_id"),
+    )
+
+    # Document submission & verification notes (added in migration 0019)
+    documents_submitted: Mapped[bool] = mapped_column(Boolean, default=False)
+    verification_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Automated NTSA licence check (added in migration 0037)
+    # Values: "unverified" | "pending" | "passed" | "failed"
+    licence_check_status: Mapped[str] = mapped_column(String(20), default="unverified", nullable=False)
+    licence_check_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    licence_check_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     user = relationship("User", foreign_keys=[user_id])
     employer = relationship("User", foreign_keys=[employer_id])

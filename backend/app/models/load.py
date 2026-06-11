@@ -1,7 +1,8 @@
 import enum
 import uuid
+from datetime import datetime
 
-from sqlalchemy import Boolean, Enum, Float, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -36,6 +37,23 @@ class CargoType(str, enum.Enum):
     electronics = "electronics"
 
 
+class TerrainDifficulty(str, enum.Enum):
+    standard = "standard"
+    highland = "highland"
+    rough    = "rough"
+    remote   = "remote"
+
+
+class LoadPaymentMode(str, enum.Enum):
+    direct = "direct"   # shipper pays trucker directly on delivery (default)
+    escrow = "escrow"   # Trakvora holds funds and releases on delivery
+
+
+class LoadVisibility(str, enum.Enum):
+    public = "public"                   # visible to all carriers
+    preferred_only = "preferred_only"   # visible only to company preferred carriers
+
+
 class Load(Base):
     __tablename__ = "loads"
 
@@ -65,14 +83,37 @@ class Load(Base):
     special_instructions: Mapped[str | None] = mapped_column(Text)
     requires_insurance: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
     direct_offer_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    # Scheduled publish — when set, the load becomes visible to carriers at this UTC time
+    scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     service_type: Mapped[VehicleServiceType] = mapped_column(
         Enum(VehicleServiceType, name="vehicleservicetype"),
         default=VehicleServiceType.truck,
         nullable=True,
     )
+    terrain_difficulty: Mapped[TerrainDifficulty] = mapped_column(
+        Enum(TerrainDifficulty, name="terraindifficulty"),
+        default=TerrainDifficulty.standard,
+        server_default="standard",
+        nullable=False,
+    )
+    payment_mode: Mapped[LoadPaymentMode] = mapped_column(
+        Enum(LoadPaymentMode, name="loadpaymentmode"),
+        default=LoadPaymentMode.direct,
+        server_default="direct",
+        nullable=False,
+    )
+    visibility: Mapped[LoadVisibility] = mapped_column(
+        Enum(LoadVisibility, name="loadvisibility"),
+        default=LoadVisibility.public,
+        server_default="public",
+        nullable=False,
+    )
+    unattended_delivery: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+    is_urgent: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
 
     shipper = relationship("User", foreign_keys=[shipper_id])
     direct_offer_user = relationship("User", foreign_keys=[direct_offer_user_id])
+    carrier_offers = relationship("LoadCarrierOffer", back_populates="load", cascade="all, delete-orphan")
 
     @property
     def shipper_name(self) -> str | None:

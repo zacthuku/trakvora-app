@@ -36,8 +36,8 @@ async def test_get_transactions_unauthenticated_returns_401(client):
 @pytest.mark.integration
 async def test_initiate_topup_returns_payment_url(client, shipper_headers):
     mock_response = {
-        "payment_url": "https://checkout.flutterwave.com/v3/hosted/pay/test",
-        "tx_ref": "TRAK-TEST-1234",
+        "payment_url": "https://sandbox.intasend.com/pay/test-invoice",
+        "tx_ref": "trakvora-test-1234",
         "amount": 1000.0,
         "amount_kes": 1000.0,
         "currency": "KES",

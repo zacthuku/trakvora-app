@@ -34,6 +34,20 @@ class TruckRepository:
         await self.db.refresh(truck)
         return truck
 
+    async def list_available(self) -> Sequence[Truck]:
+        from app.models.shipment import Shipment
+        from app.models.load import LoadStatus
+        active_statuses = [LoadStatus.en_route_pickup, LoadStatus.loaded, LoadStatus.in_transit]
+        busy_subq = select(Shipment.truck_id).where(Shipment.status.in_(active_statuses)).scalar_subquery()
+        result = await self.db.execute(
+            select(Truck).where(
+                Truck.is_active == True,   # noqa: E712
+                Truck.is_verified == True,  # noqa: E712
+                Truck.id.not_in(busy_subq),
+            )
+        )
+        return result.scalars().all()
+
     async def update(self, truck: Truck, **kwargs) -> Truck:
         for key, value in kwargs.items():
             setattr(truck, key, value)

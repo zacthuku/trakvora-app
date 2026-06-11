@@ -24,7 +24,7 @@ async def test_price_estimate_returns_pricing_keys(client):
     resp = await client.get("/loads/price-estimate?distance_km=400")
     assert resp.status_code == 200
     body = resp.json()
-    assert "total_price_kes" in body
+    assert "formula_estimate_kes" in body
     assert "platform_fee_kes" in body
     assert "owner_payout_kes" in body
     assert "vat_kes" in body
