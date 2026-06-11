@@ -8,6 +8,7 @@ import {
   TextInputProps,
   ViewStyle,
 } from "react-native";
+import { Eye, EyeOff } from "lucide-react-native";
 
 interface InputProps extends TextInputProps {
   label?: string;
@@ -36,7 +37,9 @@ export function Input({
         />
         {secureTextEntryToggle && (
           <TouchableOpacity onPress={() => setVisible((v) => !v)} style={styles.eye}>
-            <Text style={styles.eyeText}>{visible ? "Hide" : "Show"}</Text>
+            {visible
+              ? <EyeOff size={18} color="#94a3b8" />
+              : <Eye size={18} color="#94a3b8" />}
           </TouchableOpacity>
         )}
         {!secureTextEntryToggle && rightIcon && (
@@ -56,7 +59,6 @@ const styles = StyleSheet.create({
   inputError:  { borderColor: "#dc2626" },
   input:       { flex: 1, paddingHorizontal: 12, paddingVertical: 10, fontSize: 15, color: "#111827" },
   eye:         { paddingHorizontal: 12 },
-  eyeText:     { color: "#0f766e", fontSize: 13, fontWeight: "600" },
   rightIcon:   { paddingHorizontal: 12 },
   error:       { fontSize: 12, color: "#dc2626", marginTop: 4 },
 });

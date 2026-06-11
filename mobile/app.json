@@ -7,6 +7,12 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
+    "updates": {
+      "url": "https://u.expo.dev/4fa03bcc-46d2-4e60-b7df-a683e3aa6795"
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
     "extra": {
       "apiUrl": "https://trakvora.onrender.com",
       "eas": {
@@ -28,7 +34,7 @@
       "package": "com.trakvora.app",
       "newArchEnabled": true,
       "adaptiveIcon": {
-        "backgroundColor": "#0f766e",
+        "backgroundColor": "#041627",
         "foregroundImage": "./assets/android-icon-foreground.png"
       },
       "permissions": [

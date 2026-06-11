@@ -15,7 +15,7 @@ const ROLES = [
 
 export default function RegisterScreen() {
   const navigation = useNavigation<any>();
-  const [form, setForm] = useState({ name: "", email: "", phone: "", password: "", role: "shipper" as any, country: "KE" });
+  const [form, setForm] = useState({ name: "", email: "", phone: "", password: "", confirmPassword: "", role: "shipper" as any, country: "KE" });
 
   const set = (k: string) => (v: string) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -63,8 +63,15 @@ export default function RegisterScreen() {
         <Input label="Email" value={form.email} onChangeText={set("email")} keyboardType="email-address" autoCapitalize="none" placeholder="you@company.com" />
         <Input label="Phone (optional)" value={form.phone} onChangeText={set("phone")} keyboardType="phone-pad" placeholder="+254 700 000 000" />
         <Input label="Password" value={form.password} onChangeText={set("password")} secureTextEntryToggle placeholder="Min. 8 characters" />
+        <Input label="Confirm Password" value={form.confirmPassword} onChangeText={set("confirmPassword")} secureTextEntryToggle placeholder="Re-enter password" />
 
-        <Button fullWidth loading={mut.isPending} onPress={() => mut.mutate()} style={styles.btn}>
+        <Button fullWidth loading={mut.isPending} onPress={() => {
+          if (form.password !== form.confirmPassword) {
+            Alert.alert("Password Mismatch", "Passwords do not match");
+            return;
+          }
+          mut.mutate();
+        }} style={styles.btn}>
           Create Account
         </Button>
 
